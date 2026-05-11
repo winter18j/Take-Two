@@ -152,7 +152,7 @@ export default function App() {
   const playedCardLayoutRef = useRef<{ cardId: string; point: Point } | null>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -688,10 +688,19 @@ function GameTable({
   const isYourTurn = game.currentPlayerId === playerId;
   const [quitOpen, setQuitOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [dealRun, setDealRun] = useState(0);
+  const lastDealMiddleRef = useRef<string | null>(null);
 
   useEffect(() => {
     setSelectedCardId(null);
   }, [game.currentPlayerId, game.hand.length]);
+
+  useEffect(() => {
+    if (game.status === "playing" && game.message === "Game started." && game.middleCard?.id !== lastDealMiddleRef.current) {
+      lastDealMiddleRef.current = game.middleCard?.id ?? null;
+      setDealRun((run) => run + 1);
+    }
+  }, [game.message, game.middleCard?.id, game.status]);
 
   function handleLayout(event: LayoutChangeEvent) {
     const { height, width } = event.nativeEvent.layout;
@@ -762,6 +771,12 @@ function GameTable({
           <GameCard card={game.middleCard} large serverUrl={serverUrl} />
         </View>
         <DrawDeckButton canDraw={canDraw} count={game.deckCount} onDraw={onDraw} serverUrl={serverUrl} />
+        <PendingActionOverlay
+          game={game}
+          onResolvePending={onResolvePending}
+          playerId={playerId}
+          pendingForYou={pendingForYou}
+        />
 
         <ActivityLog items={activityLog} />
 
@@ -773,13 +788,6 @@ function GameTable({
                 {isYourTurn ? "Play one card or draw one." : "Waiting for your turn."}
               </Text>
             </View>
-            {pendingForYou ? (
-              <Button
-                label={game.pendingAction?.type === "draw" ? "Take" : "Skip"}
-                onPress={onResolvePending}
-                tone="danger"
-              />
-            ) : null}
           </View>
 
           <PlayerHand
@@ -803,6 +811,7 @@ function GameTable({
           serverUrl={serverUrl}
           onDone={onAnimationDone}
         />
+        <DealAnimationLayer positions={positions} run={dealRun} seats={seats} serverUrl={serverUrl} />
         <SuitChoiceOverlay
           card={pendingSevenCard}
           onChoose={onSevenSuit}
@@ -970,7 +979,11 @@ function EndGameOverlay({
   }
 
   const isOneVsOne = game.players.length === 2;
+  const connectedPlayers = game.players.filter((player) => player.isConnected);
+  const retryEnabled = isOneVsOne && connectedPlayers.length === 2;
   const loser = game.players.find((player) => player.id === game.loserId);
+  const requester = game.players.find((player) => game.rematchRequests.includes(player.id) && player.id !== playerId);
+  const youRequested = game.rematchRequests.includes(playerId);
   const orderedResults = game.roundResults
     .map((id) => game.players.find((player) => player.id === id))
     .filter((player): player is Player => Boolean(player));
@@ -1000,7 +1013,13 @@ function EndGameOverlay({
                 {player.name}: {game.scores[player.id] ?? 0}
               </Text>
             ))}
-            <RetryButton onRetry={onRetry} />
+            {requester ? (
+              <Text style={styles.endResultText}>{requester.name} wants to play again.</Text>
+            ) : null}
+            {youRequested ? (
+              <Text style={styles.endResultText}>Waiting for the other player...</Text>
+            ) : null}
+            <RetryButton disabled={!retryEnabled || youRequested} onRetry={onRetry} />
           </View>
         ) : null}
       </View>
@@ -1008,8 +1027,8 @@ function EndGameOverlay({
   );
 }
 
-function RetryButton({ onRetry }: { onRetry: () => void }) {
-  return <Button label="Retry" onPress={onRetry} />;
+function RetryButton({ disabled, onRetry }: { disabled: boolean; onRetry: () => void }) {
+  return <Button disabled={disabled} label="Retry" onPress={onRetry} />;
 }
 
 function PlayerHand({
@@ -1118,6 +1137,37 @@ function DrawDeckButton({
       ]}
     >
       <CardBack count={count} deck serverUrl={serverUrl} />
+    </Pressable>
+  );
+}
+
+function PendingActionOverlay({
+  game,
+  onResolvePending,
+  pendingForYou,
+  playerId,
+}: {
+  game: ClientGameState;
+  onResolvePending: () => void;
+  pendingForYou: boolean;
+  playerId: string;
+}) {
+  const pending = game.pendingAction;
+  if (!pendingForYou || !pending || pending.targetPlayerId !== playerId) {
+    return null;
+  }
+
+  if (pending.type === "draw") {
+    return (
+      <Pressable onPress={onResolvePending} style={styles.pendingDeckAction}>
+        <Text style={styles.pendingActionText}>Take {pending.amount}</Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable onPress={onResolvePending} style={styles.pendingStackAction}>
+      <Text style={styles.pendingActionText}>Skip</Text>
     </Pressable>
   );
 }
@@ -1543,6 +1593,112 @@ function AnimationLayer({
   );
 }
 
+function DealAnimationLayer({
+  positions,
+  run,
+  seats,
+  serverUrl,
+}: {
+  positions: TablePositions;
+  run: number;
+  seats: TableSeats;
+  serverUrl: string;
+}) {
+  const specs = useMemo(() => {
+    if (run === 0) {
+      return [];
+    }
+
+    const targets = [seats.bottom, seats.left, seats.top, seats.right]
+      .filter((player): player is Player => Boolean(player))
+      .map((player) => getSeatPosition(player.id, seats, positions));
+    const pieces: Array<{ delay: number; key: string; to: Point }> = [];
+
+    for (let round = 0; round < 4; round += 1) {
+      targets.forEach((to, index) => {
+        pieces.push({
+          delay: (round * targets.length + index) * 42,
+          key: `${run}-deal-${round}-${index}`,
+          to,
+        });
+      });
+    }
+    pieces.push({ delay: pieces.length * 42, key: `${run}-middle`, to: positions.stack });
+    return pieces;
+  }, [positions, run, seats]);
+
+  if (specs.length === 0) {
+    return null;
+  }
+
+  return (
+    <View pointerEvents="none" style={styles.dealLayer}>
+      {specs.map((piece) => (
+        <DealCardFlight
+          from={positions.deck}
+          key={piece.key}
+          piece={piece}
+          serverUrl={serverUrl}
+        />
+      ))}
+    </View>
+  );
+}
+
+function DealCardFlight({
+  from,
+  piece,
+  serverUrl,
+}: {
+  from: Point;
+  piece: { delay: number; to: Point };
+  serverUrl: string;
+}) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    progress.setValue(0);
+    Animated.timing(progress, {
+      delay: piece.delay,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [piece.delay, progress]);
+
+  const translateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [from.x, piece.to.x],
+  });
+  const translateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [from.y, piece.to.y],
+  });
+  const scale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [DECK_WIDTH / CARD_WIDTH, 0.72],
+  });
+  const opacity = progress.interpolate({
+    inputRange: [0, 0.12, 0.9, 1],
+    outputRange: [0, 1, 1, 0],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        styles.flyingCard,
+        {
+          opacity,
+          transform: [{ translateX }, { translateY }, { scale }],
+        },
+      ]}
+    >
+      <CardBack serverUrl={serverUrl} />
+    </Animated.View>
+  );
+}
+
 function Panel({ children }: { children: React.ReactNode }) {
   const fade = useRef(new Animated.Value(0)).current;
   const lift = useRef(new Animated.Value(10)).current;
@@ -1795,8 +1951,9 @@ function inferTableAnimation(
 }
 
 function buildSeats(players: Player[], selfId: string): TableSeats {
-  const self = players.find((player) => player.id === selfId) ?? players[0] ?? null;
-  const others = players.filter((player) => player.id !== self?.id);
+  const visiblePlayers = players.filter((player) => player.isConnected);
+  const self = players.find((player) => player.id === selfId) ?? visiblePlayers[0] ?? null;
+  const others = visiblePlayers.filter((player) => player.id !== self?.id);
 
   if (others.length === 1) {
     return { bottom: self, top: others[0], left: null, right: null };
@@ -2077,6 +2234,7 @@ type ClientGameState = {
   winnerId: string | null;
   loserId: string | null;
   roundResults: string[];
+  rematchRequests: string[];
   scores: Record<string, number>;
   message: string;
   youAreHost: boolean;
@@ -2697,6 +2855,41 @@ const styles = StyleSheet.create({
     right: 18,
     zIndex: 8,
   },
+  pendingDeckAction: {
+    alignItems: "center",
+    backgroundColor: "rgba(180, 35, 24, 0.62)",
+    borderColor: "rgba(255,255,255,0.38)",
+    borderRadius: 8,
+    borderWidth: 1,
+    bottom: 188,
+    justifyContent: "center",
+    minHeight: 42,
+    minWidth: 78,
+    paddingHorizontal: 10,
+    position: "absolute",
+    right: 72,
+    zIndex: 16,
+  },
+  pendingStackAction: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: "rgba(180, 35, 24, 0.58)",
+    borderColor: "rgba(255,255,255,0.38)",
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 42,
+    minWidth: 78,
+    paddingHorizontal: 10,
+    position: "absolute",
+    top: "45%",
+    zIndex: 16,
+  },
+  pendingActionText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "900",
+  },
   deckPressable: {
     borderRadius: 8,
   },
@@ -2870,6 +3063,10 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     zIndex: 20,
+  },
+  dealLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 19,
   },
   endOverlay: {
     alignItems: "center",

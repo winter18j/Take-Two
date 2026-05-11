@@ -38,7 +38,7 @@ function hasFinished(room: Room, player: Player) {
 }
 
 function activePlayers(room: Room) {
-  return room.players.filter((player) => !hasFinished(room, player));
+  return room.players.filter((player) => player.isConnected && !hasFinished(room, player));
 }
 
 function getNextActiveIndex(room: Room, fromIndex = room.currentPlayerIndex) {
@@ -49,7 +49,7 @@ function getNextActiveIndex(room: Room, fromIndex = room.currentPlayerIndex) {
   for (let offset = 1; offset <= room.players.length; offset += 1) {
     const index = (fromIndex + offset) % room.players.length;
     const player = room.players[index];
-    if (player && !hasFinished(room, player)) {
+    if (player?.isConnected && !hasFinished(room, player)) {
       return index;
     }
   }
@@ -87,6 +87,7 @@ function toClientState(room: Room, player: Player): ClientGameState {
     winnerId: room.winnerId,
     loserId: room.loserId,
     roundResults: room.roundResults,
+    rematchRequests: room.rematchRequests,
     scores: room.scores,
     message: room.message,
     youAreHost: player.isHost,
@@ -254,6 +255,26 @@ function finishRoundIfNeeded(room: Room) {
   return true;
 }
 
+function finishRoundByForfeit(room: Room, forfeitingPlayer: Player) {
+  const winner = activePlayers(room)[0] ?? room.players.find((player) => player.id !== forfeitingPlayer.id) ?? null;
+  if (winner && !room.roundResults.includes(winner.id)) {
+    room.roundResults.unshift(winner.id);
+  }
+  if (!room.roundResults.includes(forfeitingPlayer.id)) {
+    room.roundResults.push(forfeitingPlayer.id);
+  }
+
+  room.status = "finished";
+  room.pendingAction = null;
+  room.turnExpiresAt = null;
+  room.winnerId = winner?.id ?? room.winnerId;
+  room.loserId = forfeitingPlayer.id;
+  if (winner) {
+    room.scores[winner.id] = (room.scores[winner.id] ?? 0) + 1;
+  }
+  room.message = `${forfeitingPlayer.name} left. ${winner?.name ?? "The remaining player"} wins.`;
+}
+
 function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, chosenSuit?: Suit) {
   const cardIndex = player.hand.findIndex((heldCard) => heldCard.id === card.id);
   if (cardIndex < 0 || !canPlay(card, room, player)) {
@@ -327,6 +348,7 @@ export function createRoom(io: Server, socketId: string, name: string) {
     winnerId: null,
     loserId: null,
     roundResults: [],
+    rematchRequests: [],
     scores: {},
     message: "Waiting for players.",
     timer: null,
@@ -415,6 +437,7 @@ function startRound(io: Server, room: Room) {
   room.winnerId = null;
   room.loserId = null;
   room.roundResults = [];
+  room.rematchRequests = [];
   room.message = "Game started.";
   scheduleTurnTimer(io, room);
   emitRoom(io, room);
@@ -426,7 +449,8 @@ export function restartRoom(io: Server, roomId: string, playerId: string) {
     throw new Error("You can only retry after the game ends.");
   }
 
-  if (room.players.length !== 2) {
+  const connectedPlayers = room.players.filter((player) => player.isConnected);
+  if (room.players.length !== 2 || connectedPlayers.length !== 2) {
     throw new Error("Retry is only available in 1v1 rooms.");
   }
 
@@ -434,7 +458,18 @@ export function restartRoom(io: Server, roomId: string, playerId: string) {
     throw new Error("Player not found.");
   }
 
-  startRound(io, room);
+  if (!room.rematchRequests.includes(playerId)) {
+    room.rematchRequests.push(playerId);
+  }
+
+  if (connectedPlayers.every((player) => room.rematchRequests.includes(player.id))) {
+    startRound(io, room);
+    return;
+  }
+
+  const player = requirePlayer(room, playerId);
+  room.message = `${player.name} wants to play again.`;
+  emitRoom(io, room);
 }
 
 export function playCard(io: Server, roomId: string, playerId: string, cardId: string, chosenSuit?: Suit) {
@@ -565,12 +600,11 @@ export function leaveRoom(io: Server, roomId: string, playerId: string) {
       room.players[0].isHost = true;
     }
   } else if (room.status === "playing" && !hasFinished(room, player)) {
-    room.roundResults.push(player.id);
-    room.loserId = player.id;
-    if (getCurrentPlayer(room)?.id === player.id) {
+    if (activePlayers(room).length <= 1) {
+      finishRoundByForfeit(room, player);
+    } else if (getCurrentPlayer(room)?.id === player.id) {
       moveToNext(room);
     }
-    finishRoundIfNeeded(room);
     scheduleTurnTimer(io, room);
   }
 
@@ -584,6 +618,15 @@ export function handleDisconnect(io: Server, socketId: string) {
     if (player) {
       player.isConnected = false;
       room.message = `${player.name} disconnected.`;
+      if (room.status === "playing" && !hasFinished(room, player)) {
+        if (activePlayers(room).length <= 1) {
+          finishRoundByForfeit(room, player);
+          clearTimer(room);
+        } else if (getCurrentPlayer(room)?.id === player.id) {
+          moveToNext(room);
+          scheduleTurnTimer(io, room);
+        }
+      }
       emitRoom(io, room);
       return;
     }

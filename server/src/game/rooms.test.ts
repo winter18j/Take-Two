@@ -222,6 +222,10 @@ test("restartRoom starts a new 1v1 round and keeps scores", () => {
   assert.equal(room.scores[player.id], 1);
 
   restartRoom(io, room.id, player.id);
+  assert.equal(room.status, "finished");
+  assert.deepEqual(room.rematchRequests, [player.id]);
+
+  restartRoom(io, room.id, secondPlayer.id);
 
   assert.equal(room.status, "playing");
   assert.equal(room.scores[player.id], 1);

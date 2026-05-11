@@ -57,6 +57,7 @@ export type Room = {
   winnerId: string | null;
   loserId: string | null;
   roundResults: string[];
+  rematchRequests: string[];
   scores: Record<string, number>;
   message: string;
   timer: NodeJS.Timeout | null;
@@ -78,6 +79,7 @@ export type ClientGameState = {
   winnerId: string | null;
   loserId: string | null;
   roundResults: string[];
+  rematchRequests: string[];
   scores: Record<string, number>;
   message: string;
   youAreHost: boolean;
