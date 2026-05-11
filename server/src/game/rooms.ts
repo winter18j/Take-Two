@@ -9,6 +9,7 @@ import {
   RESPONSE_WINDOW_MS,
   Room,
   Suit,
+  TURN_WINDOW_MS,
 } from "./types.js";
 
 const rooms = new Map<string, Room>();
@@ -32,6 +33,30 @@ function getNextIndex(room: Room, fromIndex = room.currentPlayerIndex) {
   return (fromIndex + 1) % room.players.length;
 }
 
+function hasFinished(room: Room, player: Player) {
+  return room.roundResults.includes(player.id);
+}
+
+function activePlayers(room: Room) {
+  return room.players.filter((player) => !hasFinished(room, player));
+}
+
+function getNextActiveIndex(room: Room, fromIndex = room.currentPlayerIndex) {
+  if (room.players.length === 0) {
+    return 0;
+  }
+
+  for (let offset = 1; offset <= room.players.length; offset += 1) {
+    const index = (fromIndex + offset) % room.players.length;
+    const player = room.players[index];
+    if (player && !hasFinished(room, player)) {
+      return index;
+    }
+  }
+
+  return fromIndex;
+}
+
 function publicPlayers(room: Room) {
   return room.players.map((player) => ({
     id: player.id,
@@ -39,6 +64,9 @@ function publicPlayers(room: Room) {
     handCount: player.hand.length,
     isHost: player.isHost,
     isConnected: player.isConnected,
+    placement: room.roundResults.indexOf(player.id) >= 0
+      ? room.roundResults.indexOf(player.id) + 1
+      : null,
   }));
 }
 
@@ -54,8 +82,12 @@ function toClientState(room: Room, player: Player): ClientGameState {
     currentPlayerId: getCurrentPlayer(room)?.id ?? null,
     chosenSuit: room.chosenSuit,
     pendingAction: room.pendingAction,
+    turnExpiresAt: room.pendingAction?.expiresAt ?? room.turnExpiresAt,
     canDraw: canDrawCard(room, player),
     winnerId: room.winnerId,
+    loserId: room.loserId,
+    roundResults: room.roundResults,
+    scores: room.scores,
     message: room.message,
     youAreHost: player.isHost,
   };
@@ -74,6 +106,10 @@ function clearTimer(room: Room) {
   }
 }
 
+function isActionRank(card: Card) {
+  return card.rank === 1 || card.rank === 2 || card.rank === 7;
+}
+
 function drawFromDeck(room: Room, count: number) {
   if (room.deck.length < count && room.discard.length > 1 && room.middleCard) {
     const recycled = room.discard.filter((card) => card.id !== room.middleCard?.id);
@@ -84,8 +120,32 @@ function drawFromDeck(room: Room, count: number) {
   return drawCards(room.deck, Math.min(count, room.deck.length));
 }
 
+function drawStartingCard(room: Room) {
+  const delayedActionCards: Card[] = [];
+
+  while (room.deck.length > 0) {
+    const [candidate] = drawFromDeck(room, 1);
+    if (!candidate) {
+      break;
+    }
+
+    if (!isActionRank(candidate)) {
+      if (delayedActionCards.length > 0) {
+        room.deck.push(...shuffle(delayedActionCards));
+      }
+      return candidate;
+    }
+
+    delayedActionCards.push(candidate);
+  }
+
+  room.deck.push(...shuffle(delayedActionCards));
+  const [fallback] = drawFromDeck(room, 1);
+  return fallback ?? null;
+}
+
 function canPlay(card: Card, room: Room, player: Player) {
-  if (room.status !== "playing" || room.winnerId) {
+  if (room.status !== "playing" || hasFinished(room, player)) {
     return false;
   }
 
@@ -118,7 +178,7 @@ function findPlayable(player: Player, room: Room) {
 }
 
 function canDrawCard(room: Room, player: Player) {
-  if (room.status !== "playing" || room.winnerId) {
+  if (room.status !== "playing" || hasFinished(room, player)) {
     return false;
   }
 
@@ -132,15 +192,66 @@ function canDrawCard(room: Room, player: Player) {
 function setPending(io: Server, room: Room, pendingAction: PendingAction) {
   clearTimer(room);
   room.pendingAction = pendingAction;
+  room.turnExpiresAt = null;
   room.currentPlayerIndex = room.players.findIndex((player) => player.id === pendingAction.targetPlayerId);
 
   room.timer = setTimeout(() => {
     resolvePending(io, room.id);
   }, Math.max(0, pendingAction.expiresAt - Date.now()));
+  room.timer.unref?.();
+}
+
+function scheduleTurnTimer(io: Server, room: Room) {
+  clearTimer(room);
+  if (room.status !== "playing" || room.pendingAction || activePlayers(room).length <= 1) {
+    room.turnExpiresAt = null;
+    return;
+  }
+
+  room.turnExpiresAt = Date.now() + TURN_WINDOW_MS;
+  room.timer = setTimeout(() => {
+    resolveTurnTimeout(io, room.id);
+  }, TURN_WINDOW_MS);
+  room.timer.unref?.();
 }
 
 function moveToNext(room: Room, fromIndex = room.currentPlayerIndex) {
-  room.currentPlayerIndex = getNextIndex(room, fromIndex);
+  room.currentPlayerIndex = getNextActiveIndex(room, fromIndex);
+}
+
+function finishPlayerIfNeeded(room: Room, player: Player) {
+  if (player.hand.length > 0 || hasFinished(room, player)) {
+    return false;
+  }
+
+  room.roundResults.push(player.id);
+  if (room.roundResults.length === 1) {
+    room.winnerId = player.id;
+    room.scores[player.id] = (room.scores[player.id] ?? 0) + 1;
+  }
+  return true;
+}
+
+function finishRoundIfNeeded(room: Room) {
+  const remaining = activePlayers(room);
+  if (remaining.length > 1) {
+    return false;
+  }
+
+  const loser = remaining[0] ?? null;
+  if (loser && !room.roundResults.includes(loser.id)) {
+    room.roundResults.push(loser.id);
+  }
+
+  room.status = "finished";
+  room.pendingAction = null;
+  room.turnExpiresAt = null;
+  room.loserId = loser?.id ?? null;
+  const winner = room.players.find((player) => player.id === room.winnerId);
+  room.message = loser
+    ? `${loser.name} is the final loser. ${winner?.name ?? "Someone"} won the round.`
+    : "Round finished.";
+  return true;
 }
 
 function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, chosenSuit?: Suit) {
@@ -154,11 +265,17 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   room.discard.push(playedCard);
   clearTimer(room);
 
-  if (player.hand.length === 0) {
-    room.status = "finished";
-    room.winnerId = player.id;
+  if (finishPlayerIfNeeded(room, player)) {
     room.pendingAction = null;
-    room.message = `${player.name} won the game.`;
+    if (finishRoundIfNeeded(room)) {
+      clearTimer(room);
+      room.message = `${player.name} finished first. ${room.message}`;
+      return true;
+    }
+
+    moveToNext(room);
+    scheduleTurnTimer(io, room);
+    room.message = `${player.name} finished and secured place ${room.roundResults.length}.`;
     return true;
   }
 
@@ -167,7 +284,7 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   room.chosenSuit = playedCard.rank === 7 ? chosenSuit ?? playedCard.suit : null;
 
   if (playedCard.rank === 1) {
-    const target = room.players[getNextIndex(room)];
+    const target = room.players[getNextActiveIndex(room)];
     setPending(io, room, {
       type: "skip",
       targetPlayerId: target.id,
@@ -178,7 +295,7 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   }
 
   if (playedCard.rank === 2) {
-    const target = room.players[getNextIndex(room)];
+    const target = room.players[getNextActiveIndex(room)];
     setPending(io, room, {
       type: "draw",
       targetPlayerId: target.id,
@@ -190,6 +307,7 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   }
 
   moveToNext(room);
+  scheduleTurnTimer(io, room);
   room.message = `${player.name} played ${playedCard.imageKey}.`;
   return true;
 }
@@ -205,12 +323,17 @@ export function createRoom(io: Server, socketId: string, name: string) {
     currentPlayerIndex: 0,
     chosenSuit: null,
     pendingAction: null,
+    turnExpiresAt: null,
     winnerId: null,
+    loserId: null,
+    roundResults: [],
+    scores: {},
     message: "Waiting for players.",
     timer: null,
   };
 
   const player = addPlayerToRoom(room, socketId, name, true);
+  room.scores[player.id] = 0;
   rooms.set(room.id, room);
   io.sockets.sockets.get(socketId)?.join(room.id);
   emitRoom(io, room);
@@ -226,9 +349,11 @@ export function addPlayerToRoom(room: Room, socketId: string, name: string, isHo
     handCount: 0,
     isHost,
     isConnected: true,
+    placement: null,
   };
 
   room.players.push(player);
+  room.scores[player.id] ??= 0;
   return player;
 }
 
@@ -266,22 +391,50 @@ export function startGame(io: Server, roomId: string, playerId: string) {
     throw new Error("You need at least 2 players.");
   }
 
+  startRound(io, room);
+}
+
+function startRound(io: Server, room: Room) {
   room.deck = shuffle(createDeck());
   room.discard = [];
   room.players.forEach((player) => {
     player.hand = drawFromDeck(room, 4);
+    player.isConnected = true;
   });
 
-  const [middleCard] = drawFromDeck(room, 1);
+  const middleCard = drawStartingCard(room);
+  if (!middleCard) {
+    throw new Error("Could not start the game because the deck is empty.");
+  }
   room.middleCard = middleCard;
   room.discard = [middleCard];
   room.status = "playing";
   room.currentPlayerIndex = 0;
   room.pendingAction = null;
-  room.chosenSuit = middleCard.rank === 7 ? middleCard.suit : null;
+  room.chosenSuit = null;
   room.winnerId = null;
+  room.loserId = null;
+  room.roundResults = [];
   room.message = "Game started.";
+  scheduleTurnTimer(io, room);
   emitRoom(io, room);
+}
+
+export function restartRoom(io: Server, roomId: string, playerId: string) {
+  const room = requireRoom(roomId);
+  if (room.status !== "finished") {
+    throw new Error("You can only retry after the game ends.");
+  }
+
+  if (room.players.length !== 2) {
+    throw new Error("Retry is only available in 1v1 rooms.");
+  }
+
+  if (!room.players.some((player) => player.id === playerId)) {
+    throw new Error("Player not found.");
+  }
+
+  startRound(io, room);
 }
 
 export function playCard(io: Server, roomId: string, playerId: string, cardId: string, chosenSuit?: Suit) {
@@ -323,7 +476,9 @@ export function drawUntilPlayable(io: Server, roomId: string, playerId: string) 
   const [card] = drawFromDeck(room, 1);
 
   if (!card) {
-    room.message = "No cards left to draw.";
+    room.message = `${player.name} could not draw and lost the turn.`;
+    moveToNext(room);
+    scheduleTurnTimer(io, room);
     emitRoom(io, room);
     return;
   }
@@ -331,6 +486,32 @@ export function drawUntilPlayable(io: Server, roomId: string, playerId: string) 
   player.hand.push(card);
   room.message = `${player.name} drew 1 card.`;
   moveToNext(room);
+  scheduleTurnTimer(io, room);
+  emitRoom(io, room);
+}
+
+export function resolveTurnTimeout(io: Server, roomId: string) {
+  const room = requireRoom(roomId);
+
+  if (room.status !== "playing" || room.pendingAction) {
+    return;
+  }
+
+  const player = getCurrentPlayer(room);
+  if (!player) {
+    return;
+  }
+
+  const [card] = drawFromDeck(room, 1);
+  if (card) {
+    player.hand.push(card);
+    room.message = `${player.name} ran out of time, drew 1 card, and lost the turn.`;
+  } else {
+    room.message = `${player.name} ran out of time and lost the turn.`;
+  }
+
+  moveToNext(room);
+  scheduleTurnTimer(io, room);
   emitRoom(io, room);
 }
 
@@ -360,6 +541,39 @@ export function resolvePending(io: Server, roomId: string, playerId?: string) {
   }
 
   moveToNext(room, targetIndex);
+  scheduleTurnTimer(io, room);
+  emitRoom(io, room);
+}
+
+export function leaveRoom(io: Server, roomId: string, playerId: string) {
+  const room = requireRoom(roomId);
+  const player = requirePlayer(room, playerId);
+
+  player.isConnected = false;
+  room.message = `${player.name} left the room.`;
+
+  if (room.status === "lobby") {
+    room.players = room.players.filter((candidate) => candidate.id !== player.id);
+    delete room.scores[player.id];
+
+    if (room.players.length === 0) {
+      rooms.delete(room.id);
+      return;
+    }
+
+    if (player.isHost) {
+      room.players[0].isHost = true;
+    }
+  } else if (room.status === "playing" && !hasFinished(room, player)) {
+    room.roundResults.push(player.id);
+    room.loserId = player.id;
+    if (getCurrentPlayer(room)?.id === player.id) {
+      moveToNext(room);
+    }
+    finishRoundIfNeeded(room);
+    scheduleTurnTimer(io, room);
+  }
+
   emitRoom(io, room);
 }
 

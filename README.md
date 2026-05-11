@@ -1,6 +1,6 @@
-# Spanish Card Game
+# Take Two
 
-Clean Expo + Socket.IO implementation for the Sticks, Cups, Swords, and Gold card game.
+Clean Expo + Socket.IO implementation for Take Two, a Sticks, Cups, Swords, and Gold card game.
 
 ## Card Assets
 

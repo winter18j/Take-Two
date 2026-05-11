@@ -1,4 +1,5 @@
 export const RESPONSE_WINDOW_MS = 10_000;
+export const TURN_WINDOW_MS = 15_000;
 
 export const suits = ["sticks", "cups", "swords", "gold"] as const;
 export const ranks = [1, 2, 3, 4, 5, 6, 7, 10, 11, 12] as const;
@@ -21,6 +22,7 @@ export type PublicPlayer = {
   handCount: number;
   isHost: boolean;
   isConnected: boolean;
+  placement: number | null;
 };
 
 export type Player = PublicPlayer & {
@@ -51,7 +53,11 @@ export type Room = {
   currentPlayerIndex: number;
   chosenSuit: Suit | null;
   pendingAction: PendingAction | null;
+  turnExpiresAt: number | null;
   winnerId: string | null;
+  loserId: string | null;
+  roundResults: string[];
+  scores: Record<string, number>;
   message: string;
   timer: NodeJS.Timeout | null;
 };
@@ -67,8 +73,12 @@ export type ClientGameState = {
   currentPlayerId: string | null;
   chosenSuit: Suit | null;
   pendingAction: PendingAction | null;
+  turnExpiresAt: number | null;
   canDraw: boolean;
   winnerId: string | null;
+  loserId: string | null;
+  roundResults: string[];
+  scores: Record<string, number>;
   message: string;
   youAreHost: boolean;
 };

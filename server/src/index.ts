@@ -1,16 +1,20 @@
+import "dotenv/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
+import { createClient } from "@supabase/supabase-js";
 import {
   createRoom,
   drawUntilPlayable,
   handleDisconnect,
   joinRoom,
+  leaveRoom,
   playCard,
   resolvePending,
+  restartRoom,
   startGame,
 } from "./game/rooms.js";
 import { Suit, suits } from "./game/types.js";
@@ -19,9 +23,14 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
+    origin: process.env.CLIENT_ORIGIN ?? "*",
   },
 });
+const supabaseUrl = process.env.SUPABASE_URL ?? "";
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const supabase = supabaseUrl.includes("supabase.co") && !supabaseUrl.includes("YOUR_PROJECT_REF") && supabaseServiceRoleKey && !supabaseServiceRoleKey.includes("YOUR_")
+  ? createClient(supabaseUrl, supabaseServiceRoleKey)
+  : null;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cardsPath = path.resolve(__dirname, "../../resources/cards");
@@ -32,7 +41,7 @@ app.use("/cards", express.static(cardsPath));
 
 app.get("/", (_request, response) => {
   response.json({
-    name: "Spanish Card Game server",
+    name: "Take Two server",
     status: "running",
     app: "Open the Expo app at http://localhost:8081",
     health: "/health",
@@ -41,7 +50,7 @@ app.get("/", (_request, response) => {
 });
 
 app.get("/health", (_request, response) => {
-  response.json({ ok: true });
+  response.json({ ok: true, supabase: Boolean(supabase) });
 });
 
 function handleSocketError(socketId: string, error: unknown) {
@@ -52,6 +61,21 @@ function handleSocketError(socketId: string, error: unknown) {
 function parseSuit(value: unknown): Suit | undefined {
   return suits.find((suit) => suit === value);
 }
+
+io.use(async (socket, next) => {
+  const accessToken = socket.handshake.auth?.accessToken;
+  if (!supabase || typeof accessToken !== "string" || accessToken.length === 0) {
+    next();
+    return;
+  }
+
+  const { data, error } = await supabase.auth.getUser(accessToken);
+  if (!error && data.user) {
+    socket.data.accountId = data.user.id;
+    socket.data.email = data.user.email;
+  }
+  next();
+});
 
 io.on("connection", (socket) => {
   socket.on("createRoom", ({ name }: { name: string }) => {
@@ -75,6 +99,24 @@ io.on("connection", (socket) => {
   socket.on("startGame", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       startGame(io, roomId, playerId);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("restartRoom", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
+    try {
+      restartRoom(io, roomId, playerId);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("leaveRoom", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
+    try {
+      leaveRoom(io, roomId, playerId);
+      socket.leave(roomId);
+      socket.emit("session", null);
     } catch (error) {
       handleSocketError(socket.id, error);
     }

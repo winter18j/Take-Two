@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "card-game",
-    "slug": "card-game",
+    "name": "Take Two",
+    "slug": "taketwo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,9 +13,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "bundleIdentifier": "com.walidsabhi.taketwo",
       "supportsTablet": true
     },
     "android": {
+      "package": "com.walidsabhi.taketwo",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
