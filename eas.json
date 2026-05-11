@@ -1,0 +1,29 @@
+{
+  "cli": {
+    "version": ">= 13.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      },
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SERVER_URL": "https://take-two-server.onrender.com",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://fulznhwtdnbripsqfrmh.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_qiF2YmIyqjHW0WdRSHUOig_e8eM93hy",
+        "EXPO_PUBLIC_ADMOB_ANDROID_APP_ID": "ca-app-pub-5859429926694208~3345969782",
+        "EXPO_PUBLIC_REVENUECAT_PUBLIC_ANDROID_KEY": "goog_YOUR_REVENUECAT_KEY"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  }
+}

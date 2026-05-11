@@ -141,6 +141,7 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
   const [screen, setScreen] = useState<AppScreen>("menu");
+  const [roomAction, setRoomAction] = useState<RoomAction>("create");
   const [adDue, setAdDue] = useState(false);
   const [lastAdShownAt, setLastAdShownAt] = useState(Date.now());
 
@@ -366,6 +367,19 @@ export default function App() {
     emit("createRoom", { name });
   }
 
+  function openCreateRoom() {
+    setRoomAction("create");
+    setJoinCode("");
+    setError("");
+    setScreen("room");
+  }
+
+  function openJoinRoom() {
+    setRoomAction("join");
+    setError("");
+    setScreen("room");
+  }
+
   async function signIn() {
     if (!supabase) {
       setError("Supabase is not configured in .env.");
@@ -509,7 +523,8 @@ export default function App() {
           authEmail={authEmail}
           authPassword={authPassword}
           disabledText={error}
-          onCreateRoom={createRoom}
+          onCreateRoom={openCreateRoom}
+          onJoinRoom={openJoinRoom}
           onSignIn={signIn}
           onSignOut={signOut}
           onSignUp={signUp}
@@ -568,15 +583,9 @@ export default function App() {
 
             {appMode === "connect" ? (
               <Panel>
-                <Text style={styles.panelTitle}>Play Online</Text>
-                <TextInput
-                  autoCapitalize="none"
-                  onChangeText={setServerUrl}
-                  placeholder="Server URL"
-                  placeholderTextColor="#8c9197"
-                  style={styles.input}
-                  value={serverUrl}
-                />
+                <Text style={styles.panelTitle}>
+                  {roomAction === "create" ? "Create Room" : "Join Room"}
+                </Text>
                 <TextInput
                   onChangeText={setName}
                   placeholder="Your name"
@@ -584,15 +593,7 @@ export default function App() {
                   style={styles.input}
                   value={name}
                 />
-                <View style={styles.actions}>
-                  <Button
-                    label={socket?.connected ? "Connected" : "Connect"}
-                    onPress={connect}
-                    tone="secondary"
-                  />
-                  <Button label="Create Room" onPress={createRoom} />
-                </View>
-                <View style={styles.joinRow}>
+                {roomAction === "join" ? (
                   <TextInput
                     autoCapitalize="characters"
                     onChangeText={setJoinCode}
@@ -601,7 +602,14 @@ export default function App() {
                     style={[styles.input, styles.joinInput]}
                     value={joinCode}
                   />
-                  <Button label="Join" onPress={joinRoom} disabled={!joinCode.trim()} />
+                ) : null}
+                <View style={styles.actions}>
+                  <Button label="Back" onPress={cleanupToMenu} tone="secondary" />
+                  {roomAction === "create" ? (
+                    <Button label="Create Room" onPress={createRoom} disabled={!name.trim()} />
+                  ) : (
+                    <Button label="Join Room" onPress={joinRoom} disabled={!name.trim() || !joinCode.trim()} />
+                  )}
                 </View>
                 {error ? <Text style={styles.error}>{error}</Text> : null}
               </Panel>
@@ -819,6 +827,7 @@ function MainMenuScreen({
   authPassword,
   disabledText,
   onCreateRoom,
+  onJoinRoom,
   onOpenSettings,
   onSignIn,
   onSignOut,
@@ -832,6 +841,7 @@ function MainMenuScreen({
   authPassword: string;
   disabledText: string;
   onCreateRoom: () => void;
+  onJoinRoom: () => void;
   onOpenSettings: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -897,6 +907,7 @@ function MainMenuScreen({
         <View style={styles.mainMenuActions}>
           <Button disabled label="Play Random" onPress={() => undefined} tone="secondary" />
           <Button label="Create Room" onPress={onCreateRoom} />
+          <Button label="Join Room" onPress={onJoinRoom} tone="secondary" />
           <Button disabled label="Watch Ad +1 Token" onPress={() => undefined} tone="secondary" />
           <Button disabled label="Buy Tokens" onPress={() => undefined} tone="secondary" />
           <Button disabled label="Remove Ads $0.99" onPress={() => undefined} tone="secondary" />
@@ -1997,6 +2008,7 @@ const confettiColors = ["#fff3c4", "#ff6b5f", "#28b36d", "#5cc8ff", "#f7a8ff", "
 
 type AppMode = "connect" | "lobby" | "game";
 type AppScreen = "menu" | "room";
+type RoomAction = "create" | "join";
 type Suit = (typeof suits)[number];
 type Rank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 10 | 11 | 12;
 
