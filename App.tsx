@@ -54,7 +54,7 @@ const DECK_WIDTH = Math.round(CARD_WIDTH * 0.5);
 const DECK_HEIGHT = Math.round(CARD_HEIGHT * 0.5);
 const STACK_WIDTH = Math.round(116 * 1.25);
 const STACK_HEIGHT = Math.round(174 * 1.25);
-const TABLE_IMAGE = require("./resources/cards-opti/table-1.webp");
+const TABLE_IMAGE = require("./resources/cards-opti/table-1.png");
 const CARD_BACK_IMAGE = require("./resources/cards-opti/cardback.webp");
 const cardImages: Record<string, number> = {
   "bastos-1": require("./resources/cards-opti/bastos-1.webp"),
