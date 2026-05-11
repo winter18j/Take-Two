@@ -562,7 +562,8 @@ export default function App() {
         />
       ) : (
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
           style={styles.keyboardView}
         >
           <ScrollView
@@ -865,7 +866,16 @@ function MainMenuScreen({
       <Pressable onPress={onOpenSettings} style={styles.settingsButton}>
         <Text style={styles.settingsButtonText}>Settings</Text>
       </Pressable>
-      <View style={styles.mainMenuContent}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+        style={styles.menuKeyboardView}
+      >
+        <ScrollView
+          contentContainerStyle={styles.mainMenuContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
         <Text style={styles.mainMenuTitle}>Take Two</Text>
         <View style={styles.accountStrip}>
           <Text style={styles.accountStripText}>
@@ -924,7 +934,8 @@ function MainMenuScreen({
           <Button disabled label="Customize" onPress={() => undefined} tone="secondary" />
         </View>
         {disabledText ? <Text style={styles.menuNotice}>{disabledText}</Text> : null}
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </ImageBackground>
   );
 }
@@ -2565,10 +2576,15 @@ const styles = StyleSheet.create({
   },
   mainMenuContent: {
     alignItems: "center",
-    flex: 1,
     gap: 22,
     justifyContent: "center",
+    minHeight: "100%",
     padding: 22,
+    paddingBottom: 40,
+    paddingTop: 78,
+  },
+  menuKeyboardView: {
+    flex: 1,
   },
   mainMenuTitle: {
     color: "#ffffff",
