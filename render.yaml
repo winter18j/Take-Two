@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: take-two-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: CLIENT_ORIGIN
+        value: "*"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ADMOB_ANDROID_APP_ID
+        sync: false
+      - key: GOOGLE_PLAY_PACKAGE_NAME
+        value: com.walidsabhi.taketwo
+      - key: REVENUECAT_PUBLIC_ANDROID_KEY
+        sync: false

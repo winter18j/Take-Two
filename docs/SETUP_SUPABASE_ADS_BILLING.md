@@ -115,10 +115,19 @@ For production, the host should run:
 
 ```bash
 npm install
-npx tsx src/index.ts
+npm start
 ```
 
 Set the host environment variables from `server/.env.example`.
+
+For Render specifically:
+
+- Root directory: `server`
+- Build command: `npm install`
+- Start command: `npm start`
+- Do not manually set `PORT`; Render provides it automatically.
+
+The repo also includes `render.yaml` with the same settings.
 
 After deployment, set `EXPO_PUBLIC_SERVER_URL` to the public server URL.
 
