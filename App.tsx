@@ -1312,6 +1312,7 @@ function SuitChoiceOverlay({
           >
             <View style={styles.suitIconClip}>
               <Image
+                fadeDuration={0}
                 resizeMode="cover"
                 source={cardImages[suitIconCards[suit]]}
                 style={styles.suitIconImage}
@@ -1829,7 +1830,7 @@ function CardBack({
         opponent ? styles.opponentCardBack : null,
       ]}
     >
-      <Image resizeMode="cover" source={CARD_BACK_IMAGE} style={styles.cardImage} />
+      <Image fadeDuration={0} resizeMode="cover" source={CARD_BACK_IMAGE} style={styles.cardImage} />
       {typeof count === "number" ? (
         <View style={styles.cardBackBadge}>
           <Text style={styles.cardBackBadgeText}>{count}</Text>
@@ -1890,6 +1891,7 @@ function GameCard({
       >
         {!imageFailed ? (
           <Image
+            fadeDuration={0}
             onError={() => setImageFailed(true)}
             resizeMode="contain"
             source={cardImages[card.imageKey] ?? CARD_BACK_IMAGE}
@@ -2739,10 +2741,9 @@ const styles = StyleSheet.create({
     overflow: "visible",
   },
   activeOpponentStack: {
-    shadowColor: "#fff3c4",
-    shadowOffset: { height: 0, width: 0 },
-    shadowOpacity: 0.75,
-    shadowRadius: 8,
+    borderColor: "rgba(255, 243, 196, 0.75)",
+    borderRadius: 8,
+    borderWidth: 1,
   },
   opponentStackCard: {
     position: "absolute",
