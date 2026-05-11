@@ -1,7 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient, Session as SupabaseSession, User } from "@supabase/supabase-js";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -104,6 +104,8 @@ const suitIconCards: Record<Suit, string> = {
   swords: "espadas-1",
   sticks: "bastos-1",
 };
+
+const CARD_FACE_RESIZE_METHOD = "resize" as const;
 
 const soundPlaceholders = {
   draw: "resources/sounds/draw-card.*",
@@ -769,7 +771,7 @@ function GameTable({
         </View>
 
         <View style={styles.centerPile}>
-          <GameCard card={game.middleCard} large serverUrl={serverUrl} />
+          <StaticCardFace card={game.middleCard} large />
         </View>
         <DrawDeckButton canDraw={canDraw} count={game.deckCount} onDraw={onDraw} serverUrl={serverUrl} />
         <PendingActionOverlay
@@ -1313,6 +1315,7 @@ function SuitChoiceOverlay({
             <View style={styles.suitIconClip}>
               <Image
                 fadeDuration={0}
+                resizeMethod={CARD_FACE_RESIZE_METHOD}
                 resizeMode="cover"
                 source={cardImages[suitIconCards[suit]]}
                 style={styles.suitIconImage}
@@ -1584,6 +1587,8 @@ function AnimationLayer({
   return (
     <Animated.View
       pointerEvents="none"
+      renderToHardwareTextureAndroid
+      shouldRasterizeIOS
       style={[
         styles.flyingCard,
         {
@@ -1599,7 +1604,7 @@ function AnimationLayer({
       {activeAnimation.type === "draw" || !activeAnimation.card ? (
         <CardBack serverUrl={serverUrl} />
       ) : (
-        <GameCard card={activeAnimation.card} serverUrl={serverUrl} />
+        <StaticCardFace card={activeAnimation.card} />
       )}
     </Animated.View>
   );
@@ -1698,6 +1703,8 @@ function DealCardFlight({
 
   return (
     <Animated.View
+      renderToHardwareTextureAndroid
+      shouldRasterizeIOS
       style={[
         styles.flyingCard,
         {
@@ -1802,7 +1809,7 @@ function PlayerRow({ active, isYou, player }: { active: boolean; isYou: boolean;
   );
 }
 
-function CardBack({
+const CardBack = memo(function CardBack({
   count,
   deck,
   large,
@@ -1830,7 +1837,13 @@ function CardBack({
         opponent ? styles.opponentCardBack : null,
       ]}
     >
-      <Image fadeDuration={0} resizeMode="cover" source={CARD_BACK_IMAGE} style={styles.cardImage} />
+      <Image
+        fadeDuration={0}
+        resizeMethod={CARD_FACE_RESIZE_METHOD}
+        resizeMode="cover"
+        source={CARD_BACK_IMAGE}
+        style={styles.cardImage}
+      />
       {typeof count === "number" ? (
         <View style={styles.cardBackBadge}>
           <Text style={styles.cardBackBadgeText}>{count}</Text>
@@ -1838,7 +1851,41 @@ function CardBack({
       ) : null}
     </View>
   );
-}
+});
+
+const StaticCardFace = memo(function StaticCardFace({
+  card,
+  large,
+}: {
+  card: Card | null;
+  large?: boolean;
+}) {
+  const source = card ? cardImages[card.imageKey] ?? CARD_BACK_IMAGE : null;
+
+  if (!source) {
+    return (
+      <View style={[styles.card, large ? styles.largeCard : null]}>
+        <Text style={styles.cardRank}>?</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      renderToHardwareTextureAndroid
+      shouldRasterizeIOS
+      style={[styles.card, large ? styles.largeCard : null]}
+    >
+      <Image
+        fadeDuration={0}
+        resizeMethod={CARD_FACE_RESIZE_METHOD}
+        resizeMode="contain"
+        source={source}
+        style={styles.cardImage}
+      />
+    </View>
+  );
+});
 
 function GameCard({
   card,
@@ -1853,7 +1900,6 @@ function GameCard({
   onPress?: () => void;
   serverUrl: string;
 }) {
-  const [imageFailed, setImageFailed] = useState(false);
   const scale = useRef(new Animated.Value(1)).current;
 
   function animate(toValue: number) {
@@ -1889,20 +1935,13 @@ function GameCard({
           { transform: [{ scale }] },
         ]}
       >
-        {!imageFailed ? (
-          <Image
-            fadeDuration={0}
-            onError={() => setImageFailed(true)}
-            resizeMode="contain"
-            source={cardImages[card.imageKey] ?? CARD_BACK_IMAGE}
-            style={styles.cardImage}
-          />
-        ) : (
-          <View style={styles.cardFallback}>
-            <Text style={styles.cardRank}>{rankLabel(card.rank)}</Text>
-            <Text style={styles.cardSuit}>{suitLabel(card.suit)}</Text>
-          </View>
-        )}
+        <Image
+          fadeDuration={0}
+          resizeMethod={CARD_FACE_RESIZE_METHOD}
+          resizeMode="contain"
+          source={cardImages[card.imageKey] ?? CARD_BACK_IMAGE}
+          style={styles.cardImage}
+        />
         {disabled ? <View pointerEvents="none" style={styles.disabledCardOverlay} /> : null}
       </Animated.View>
     </Pressable>
