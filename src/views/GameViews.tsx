@@ -17,8 +17,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { playSound } from "../audio/soundEffects";
-import type { SoundName } from "../audio/soundEffects";
 import { CardImageEngine } from "./rendering/CardImageEngine";
 
 export const RESPONSE_WINDOW_SECONDS = 10;
@@ -90,8 +88,12 @@ const suitIconCards: Record<Suit, string> = {
 
 const CARD_FACE_RESIZE_METHOD = "resize" as const;
 
+type SoundName = "draw" | "gameEnd" | "lose" | "music" | "pick" | "play" | "turn" | "win";
+
 export function playSoundPlaceholder(name: SoundName) {
-  void playSound(name);
+  void import("../audio/soundEffects")
+    .then(({ playSound }) => playSound(name))
+    .catch(() => undefined);
 }
 
 
@@ -387,6 +389,7 @@ export function MainMenuScreen({
   disabledText,
   onCreateRoom,
   onJoinRoom,
+  onToggleMusicMute,
   onOpenSettings,
   onSignIn,
   onSignOut,
@@ -394,6 +397,7 @@ export function MainMenuScreen({
   setAuthEmail,
   setAuthPassword,
   user,
+  musicMuted,
 }: {
   authBusy: boolean;
   authEmail: string;
@@ -401,6 +405,7 @@ export function MainMenuScreen({
   disabledText: string;
   onCreateRoom: () => void;
   onJoinRoom: () => void;
+  onToggleMusicMute: () => void;
   onOpenSettings: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -408,12 +413,16 @@ export function MainMenuScreen({
   setAuthEmail: (email: string) => void;
   setAuthPassword: (password: string) => void;
   user: User | null;
+  musicMuted: boolean;
 }) {
   return (
     <ImageBackground source={TABLE_IMAGE} resizeMode="cover" style={styles.menuBackground}>
       <View style={styles.menuShade} />
       <Pressable onPress={onOpenSettings} style={styles.settingsButton}>
         <Text style={styles.settingsButtonText}>Settings</Text>
+      </Pressable>
+      <Pressable onPress={onToggleMusicMute} style={styles.musicButton}>
+        <Text style={styles.settingsButtonText}>{musicMuted ? "Music Off" : "Music On"}</Text>
       </Pressable>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -2192,6 +2201,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     position: "absolute",
     right: 16,
+    top: 18,
+    zIndex: 4,
+  },
+  musicButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(16, 19, 23, 0.72)",
+    borderColor: "rgba(255,255,255,0.16)",
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: "center",
+    left: 16,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    position: "absolute",
     top: 18,
     zIndex: 4,
   },

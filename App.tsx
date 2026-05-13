@@ -4,7 +4,6 @@ import { createClient, Session as SupabaseSession, User } from "@supabase/supaba
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SafeAreaView } from "react-native";
 import { io, Socket } from "socket.io-client";
-import { startMusic, stopMusic } from "./src/audio/soundEffects";
 import {
   ActivityItem,
   AppMode,
@@ -72,6 +71,11 @@ export default function App() {
   const [roomAction, setRoomAction] = useState<RoomAction>("create");
   const [adDue, setAdDue] = useState(false);
   const [lastAdShownAt, setLastAdShownAt] = useState(Date.now());
+  const [showLaunch, setShowLaunch] = useState(true);
+  const [launchConnected, setLaunchConnected] = useState(false);
+  const [launchProgress, setLaunchProgress] = useState(0.12);
+  const [launchStatus, setLaunchStatus] = useState("Connecting to server...");
+  const [musicMuted, setMusicMutedState] = useState(false);
 
   const visibleGameRef = useRef<ClientGameState | null>(null);
   const queueBaseRef = useRef<ClientGameState | null>(null);
@@ -85,9 +89,51 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void startMusic();
-    return () => stopMusic();
-  }, []);
+    let cancelled = false;
+
+    async function waitForServer() {
+      let attempt = 0;
+      while (!cancelled) {
+        attempt += 1;
+        setLaunchStatus(attempt === 1 ? "Connecting to server..." : "Server is waking up...");
+        setLaunchProgress(Math.min(0.82, 0.16 + attempt * 0.11));
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        try {
+          const response = await fetch(`${serverUrl.replace(/\/$/, "")}/health`, {
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+
+          if (response.ok) {
+            setLaunchStatus("Connected");
+            setLaunchProgress(1);
+            try {
+              const soundEngine = await import("./src/audio/soundEffects");
+              await soundEngine.warmSoundEffects();
+              soundEngine.setMusicMuted(musicMuted);
+            } catch {
+              // Audio warm-up should not stop the app from opening.
+            }
+            if (!cancelled) {
+              setLaunchConnected(true);
+            }
+            return;
+          }
+        } catch {
+          clearTimeout(timeout);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
+
+    void waitForServer();
+    return () => {
+      cancelled = true;
+    };
+  }, [serverUrl]);
 
   useEffect(() => {
     visibleGameRef.current = visibleGame;
@@ -192,6 +238,9 @@ export default function App() {
 
     const nextAnimation = animationQueueRef.current.shift() ?? null;
     activeAnimationRef.current = nextAnimation;
+    if (nextAnimation) {
+      playSoundPlaceholder(nextAnimation.type === "draw" ? "draw" : "play");
+    }
     setActiveAnimation(nextAnimation);
   }, []);
 
@@ -201,7 +250,6 @@ export default function App() {
       return;
     }
 
-    playSoundPlaceholder(finished.type === "draw" ? "draw" : "play");
     setActivityLog((items) => trimActivityLog([formatActivity(finished), ...items]));
     queueBaseRef.current = finished.nextState;
     visibleGameRef.current = finished.nextState;
@@ -311,6 +359,16 @@ export default function App() {
     setRoomAction("join");
     setError("");
     setScreen("room");
+  }
+
+  function toggleMusicMute() {
+    setMusicMutedState((previous) => {
+      const next = !previous;
+      void import("./src/audio/soundEffects")
+        .then((soundEngine) => soundEngine.setMusicMuted(next))
+        .catch(() => undefined);
+      return next;
+    });
   }
 
   async function signIn() {
@@ -450,14 +508,23 @@ export default function App() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#101317" }}>
       <StatusBar style="light" />
-      {screen === "menu" ? (
+      {showLaunch ? (
+        <LaunchTransition
+          connected={launchConnected}
+          onFinish={() => setShowLaunch(false)}
+          progress={launchProgress}
+          status={launchStatus}
+        />
+      ) : screen === "menu" ? (
         <MainMenuScreen
           authBusy={authBusy}
           authEmail={authEmail}
           authPassword={authPassword}
           disabledText={error}
+          musicMuted={musicMuted}
           onCreateRoom={openCreateRoom}
           onJoinRoom={openJoinRoom}
+          onToggleMusicMute={toggleMusicMute}
           onSignIn={signIn}
           onSignOut={signOut}
           onSignUp={signUp}
@@ -511,7 +578,6 @@ export default function App() {
           setName={setName}
         />
       )}
-      <LaunchTransition />
     </SafeAreaView>
   );
 }

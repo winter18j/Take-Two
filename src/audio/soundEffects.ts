@@ -27,6 +27,7 @@ const volumes: Record<SoundName, number> = {
 
 let configured = false;
 const players = new Map<SoundName, AudioPlayer>();
+let musicMuted = false;
 
 async function configureAudio() {
   if (configured) {
@@ -60,12 +61,23 @@ function getPlayer(name: SoundName) {
   return player;
 }
 
+export async function warmSoundEffects() {
+  await configureAudio();
+  (Object.keys(soundSources) as SoundName[]).forEach((name) => {
+    getPlayer(name);
+  });
+}
+
 export async function playSound(name: SoundName) {
+  if (name === "music" && musicMuted) {
+    return;
+  }
+
   await configureAudio();
 
   const player = getPlayer(name);
   try {
-    await player.seekTo(0);
+    void player.seekTo(0);
     player.play();
   } catch {
     // Audio should never block gameplay. A later tap/event can try again.
@@ -81,4 +93,15 @@ export function stopMusic() {
   if (player?.playing) {
     player.pause();
   }
+}
+
+export function setMusicMuted(muted: boolean) {
+  musicMuted = muted;
+  const player = players.get("music");
+  if (muted) {
+    player?.pause();
+    return;
+  }
+
+  void startMusic();
 }
