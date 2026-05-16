@@ -24,8 +24,30 @@ test("matchmaking chooses the closest hidden score group up to four players", ()
 
   const match = queue.findMatch(now);
 
+  assert.equal(match?.botCount, 0);
   assert.deepEqual(
     match?.entries.map((candidate) => candidate.socketId),
     ["a", "b", "c", "d"],
   );
+});
+
+test("matchmaking waits ten seconds for fewer than four players", () => {
+  const queue = new MatchmakingQueue();
+
+  queue.add(entry("a", 1000, 0));
+  queue.add(entry("b", 1010, 0));
+
+  assert.equal(queue.findMatch(9_000), null);
+  assert.deepEqual(queue.findMatch(10_000)?.entries.map((candidate) => candidate.socketId), ["a", "b"]);
+});
+
+test("matchmaking creates a bot match after one player waits ten seconds", () => {
+  const queue = new MatchmakingQueue();
+
+  queue.add(entry("solo", 1000, 0));
+
+  const match = queue.findMatch(10_000);
+
+  assert.equal(match?.botCount, 1);
+  assert.deepEqual(match?.entries.map((candidate) => candidate.socketId), ["solo"]);
 });

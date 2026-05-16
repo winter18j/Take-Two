@@ -92,11 +92,19 @@ function tryStartMatchmakingRoom() {
     return;
   }
 
-  const { room, players } = createMatchmakingRoom(io, match.entries);
+  const { room, players } = createMatchmakingRoom(io, match.entries, match.botCount);
   players.forEach((player) => {
+    if (player.isBot) {
+      return;
+    }
     io.to(player.socketId).emit("session", { roomId: room.id, playerId: player.id });
+    io.to(player.socketId).emit("matchmakingStatus", { queued: false });
   });
 }
+
+setInterval(() => {
+  tryStartMatchmakingRoom();
+}, 1000).unref?.();
 
 async function persistFinishedMatch(roomId: string) {
   if (!supabase || persistedMatches.has(roomId)) {
@@ -191,7 +199,10 @@ io.on("connection", (socket) => {
         socketId: socket.id,
       });
       const status = matchmakingQueue.status(socket.id);
-      socket.emit("matchmakingStatus", status);
+      socket.emit("matchmakingStatus", {
+        ...status,
+        etaSeconds: matchmakingQueue.size() >= 4 ? 2 : 10,
+      });
       tryStartMatchmakingRoom();
     } catch (error) {
       handleSocketError(socket.id, error);

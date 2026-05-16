@@ -19,6 +19,7 @@ export type Card = {
 export type PublicPlayer = {
   id: string;
   accountId?: string;
+  isBot?: boolean;
   name: string;
   handCount: number;
   isHost: boolean;

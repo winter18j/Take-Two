@@ -34,6 +34,7 @@ import {
 } from "./src/views";
 
 const storedSessionKey = "take-two-session";
+const storedNameKey = "take-two-player-name";
 const configuredServerUrl = process.env.EXPO_PUBLIC_SERVER_URL;
 const defaultServerUrl = configuredServerUrl && !configuredServerUrl.includes("YOUR_SERVER_HOST")
   ? configuredServerUrl
@@ -53,7 +54,7 @@ const supabase = supabaseUrl && supabaseAnonKey
 
 export default function App() {
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);
-  const [name, setName] = useState("Player");
+  const [name, setNameState] = useState("Player");
   const [joinCode, setJoinCode] = useState("");
   const [socket, setSocket] = useState<Socket | null>(null);
   const [authSession, setAuthSession] = useState<SupabaseSession | null>(null);
@@ -82,7 +83,7 @@ export default function App() {
   const [musicMuted, setMusicMutedState] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
-  const [matchmaking, setMatchmaking] = useState<{ queued: boolean; queueSize?: number; seconds?: number }>({ queued: false });
+  const [matchmaking, setMatchmaking] = useState<{ queued: boolean; etaSeconds?: number; seconds?: number }>({ queued: false });
 
   const visibleGameRef = useRef<ClientGameState | null>(null);
   const sessionRef = useRef<Session | null>(null);
@@ -96,6 +97,23 @@ export default function App() {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem(storedNameKey)
+      .then((storedName) => {
+        if (storedName?.trim()) {
+          setNameState(storedName);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
+  function setName(nextName: string) {
+    setNameState(nextName);
+    if (nextName.trim()) {
+      void AsyncStorage.setItem(storedNameKey, nextName.trim());
+    }
+  }
 
   useEffect(() => {
     if (!matchmaking.queued) {
@@ -206,9 +224,6 @@ export default function App() {
     supabase.auth.getSession().then(({ data }) => {
       setAuthSession(data.session);
       setAuthUser(data.session?.user ?? null);
-      if (data.session?.user.email) {
-        setName(data.session.user.email.split("@")[0] ?? "Player");
-      }
       if (data.session?.user) {
         setAuthGateDone(true);
       }
@@ -217,9 +232,6 @@ export default function App() {
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setAuthSession(nextSession);
       setAuthUser(nextSession?.user ?? null);
-      if (nextSession?.user.email) {
-        setName(nextSession.user.email.split("@")[0] ?? "Player");
-      }
       if (nextSession?.user) {
         setAuthGateDone(true);
       }
@@ -395,6 +407,10 @@ export default function App() {
     });
     nextSocket.on("session", (nextSession: Session | null) => {
       setSession(nextSession);
+      if (nextSession) {
+        setScreen("room");
+        setMatchmaking({ queued: false });
+      }
       if (!nextSession) {
         void AsyncStorage.removeItem(storedSessionKey);
       }
@@ -453,6 +469,7 @@ export default function App() {
 
     setError("");
     setMatchmaking({ queued: true, seconds: 0 });
+    setFriendsOpen(false);
     if (!socket?.connected) {
       const nextSocket = connect({ resetState: false });
       nextSocket.once("connect", () => nextSocket.emit("joinMatchmaking", { name }));
@@ -664,32 +681,8 @@ export default function App() {
           onSignUp={signUp}
           setAuthEmail={setAuthEmail}
           setAuthPassword={setAuthPassword}
-        />
-      ) : screen === "menu" ? (
-        <MainMenuScreen
-          authBusy={authBusy}
-          authEmail={authEmail}
-          authPassword={authPassword}
-          disabledText={error}
-          musicMuted={musicMuted}
-          matchmaking={matchmaking}
-          friendsOpen={friendsOpen}
-          onCancelMatchmaking={cancelMatchmaking}
-          onCreateRoom={openCreateRoom}
-          onJoinRoom={openJoinRoom}
-          onPlayRandom={playRandom}
-          onOpenProfile={() => setProfileOpen(true)}
-          onCloseProfile={() => setProfileOpen(false)}
-          onToggleFriends={() => setFriendsOpen((open) => !open)}
-          onToggleMusicMute={toggleMusicMute}
-          onSignIn={signIn}
-          onSignOut={signOut}
-          onSignUp={signUp}
-          profileOpen={profileOpen}
-          onOpenSettings={() => setScreen("room")}
-          setAuthEmail={setAuthEmail}
-          setAuthPassword={setAuthPassword}
-          user={authUser}
+          name={name}
+          setName={setName}
         />
       ) : appMode === "game" && visibleGame && session ? (
         <GameTable
@@ -717,6 +710,38 @@ export default function App() {
           onRetry={retryRound}
           adDue={adDue}
           onAdClosed={() => setAdDue(false)}
+        />
+      ) : screen === "menu" ? (
+        <MainMenuScreen
+          authBusy={authBusy}
+          authEmail={authEmail}
+          authPassword={authPassword}
+          disabledText={error}
+          musicMuted={musicMuted}
+          matchmaking={matchmaking}
+          friendsOpen={friendsOpen}
+          onCancelMatchmaking={cancelMatchmaking}
+          onCreateRoom={openCreateRoom}
+          onJoinRoom={openJoinRoom}
+          onPlayRandom={playRandom}
+          onOpenProfile={() => setProfileOpen(true)}
+          onCloseProfile={() => setProfileOpen(false)}
+          onToggleFriends={() => {
+            if (!matchmaking.queued) {
+              setFriendsOpen((open) => !open);
+            }
+          }}
+          name={name}
+          setName={setName}
+          onToggleMusicMute={toggleMusicMute}
+          onSignIn={signIn}
+          onSignOut={signOut}
+          onSignUp={signUp}
+          profileOpen={profileOpen}
+          onOpenSettings={() => setScreen("room")}
+          setAuthEmail={setAuthEmail}
+          setAuthPassword={setAuthPassword}
+          user={authUser}
         />
       ) : (
         <RoomScreen

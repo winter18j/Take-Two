@@ -61,6 +61,7 @@ function publicPlayers(room: Room) {
   return room.players.map((player) => ({
     id: player.id,
     accountId: player.accountId,
+    isBot: player.isBot,
     name: player.name,
     handCount: player.hand.length,
     isHost: player.isHost,
@@ -97,6 +98,9 @@ function toClientState(room: Room, player: Player): ClientGameState {
 
 function emitRoom(io: Server, room: Room) {
   for (const player of room.players) {
+    if (player.isBot) {
+      continue;
+    }
     io.to(player.socketId).emit("gameState", toClientState(room, player));
   }
 }
@@ -334,6 +338,49 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   return true;
 }
 
+function maybeRunBotTurn(io: Server, room: Room) {
+  const bot = getCurrentPlayer(room);
+  if (room.status !== "playing" || !bot?.isBot) {
+    return;
+  }
+
+  setTimeout(() => {
+    if (room.status !== "playing" || getCurrentPlayer(room)?.id !== bot.id) {
+      return;
+    }
+
+    if (room.pendingAction?.targetPlayerId === bot.id) {
+      const answerRank = room.pendingAction.type === "skip" ? 1 : 2;
+      const answer = bot.hand.find((card) => card.rank === answerRank);
+      if (answer) {
+        applyPlayedCard(io, room, bot, answer, answer.rank === 7 ? answer.suit : undefined);
+      } else {
+        resolvePending(io, room.id, bot.id);
+        return;
+      }
+    } else {
+      const playable = bot.hand.find((card) => canPlay(card, room, bot));
+      if (playable) {
+        applyPlayedCard(io, room, bot, playable, playable.rank === 7 ? playable.suit : undefined);
+      } else if (canDrawCard(room, bot)) {
+        const [card] = drawFromDeck(room, 1);
+        if (card) {
+          bot.hand.push(card);
+        }
+        room.message = `${bot.name} drew 1 card.`;
+        moveToNext(room);
+        scheduleTurnTimer(io, room);
+      } else {
+        moveToNext(room);
+        scheduleTurnTimer(io, room);
+      }
+    }
+
+    emitRoom(io, room);
+    maybeRunBotTurn(io, room);
+  }, 850).unref?.();
+}
+
 export function createRoom(io: Server, socketId: string, name: string, accountId?: string) {
   const room: Room = {
     id: roomCode(),
@@ -381,6 +428,39 @@ export function addPlayerToRoom(room: Room, socketId: string, name: string, isHo
   return player;
 }
 
+function addBotToRoom(room: Room) {
+  const botNames = [
+    "JasonModeler",
+    "GodOfWar2",
+    "CupCollector",
+    "OrosGhost",
+    "SevenSmith",
+    "BastosByte",
+    "SwordRunner",
+    "CardMancer",
+    "GoldFalcon",
+    "StackWizard",
+    "TurnTaker",
+    "HezPilot",
+  ];
+  const usedNames = new Set(room.players.map((player) => player.name));
+  const name = botNames.find((candidate) => !usedNames.has(candidate)) ?? `Bot${room.players.length + 1}`;
+  const player: Player = {
+    id: randomUUID(),
+    isBot: true,
+    socketId: `bot-${randomUUID()}`,
+    name,
+    hand: [],
+    handCount: 0,
+    isHost: false,
+    isConnected: true,
+    placement: null,
+  };
+  room.players.push(player);
+  room.scores[player.id] = 0;
+  return player;
+}
+
 export function joinRoom(io: Server, socketId: string, roomId: string, name: string, accountId?: string) {
   const room = rooms.get(roomId.toUpperCase());
 
@@ -425,8 +505,9 @@ export function resumeSession(io: Server, socketId: string, roomId: string, play
 export function createMatchmakingRoom(
   io: Server,
   entries: Array<{ accountId: string; name: string; socketId: string }>,
+  botCount = 0,
 ) {
-  if (entries.length < 2 || entries.length > 4) {
+  if (entries.length + botCount < 2 || entries.length + botCount > 4) {
     throw new Error("Matchmaking rooms need 2 to 4 players.");
   }
 
@@ -437,8 +518,12 @@ export function createMatchmakingRoom(
     players.push(addPlayerToRoom(room, entry.socketId, entry.name, false, entry.accountId));
     io.sockets.sockets.get(entry.socketId)?.join(room.id);
   }
+  for (let index = 0; index < botCount; index += 1) {
+    players.push(addBotToRoom(room));
+  }
 
   startRound(io, room);
+  maybeRunBotTurn(io, room);
   return { room, players };
 }
 
@@ -482,6 +567,7 @@ function startRound(io: Server, room: Room) {
   room.message = "Game started.";
   scheduleTurnTimer(io, room);
   emitRoom(io, room);
+  maybeRunBotTurn(io, room);
 }
 
 export function restartRoom(io: Server, roomId: string, playerId: string) {
@@ -531,6 +617,7 @@ export function playCard(io: Server, roomId: string, playerId: string, cardId: s
   }
 
   emitRoom(io, room);
+  maybeRunBotTurn(io, room);
 }
 
 export function drawUntilPlayable(io: Server, roomId: string, playerId: string) {
@@ -564,6 +651,7 @@ export function drawUntilPlayable(io: Server, roomId: string, playerId: string) 
   moveToNext(room);
   scheduleTurnTimer(io, room);
   emitRoom(io, room);
+  maybeRunBotTurn(io, room);
 }
 
 export function resolveTurnTimeout(io: Server, roomId: string) {
@@ -589,6 +677,7 @@ export function resolveTurnTimeout(io: Server, roomId: string) {
   moveToNext(room);
   scheduleTurnTimer(io, room);
   emitRoom(io, room);
+  maybeRunBotTurn(io, room);
 }
 
 export function resolvePending(io: Server, roomId: string, playerId?: string) {
@@ -619,6 +708,7 @@ export function resolvePending(io: Server, roomId: string, playerId?: string) {
   moveToNext(room, targetIndex);
   scheduleTurnTimer(io, room);
   emitRoom(io, room);
+  maybeRunBotTurn(io, room);
 }
 
 export function leaveRoom(io: Server, roomId: string, playerId: string) {

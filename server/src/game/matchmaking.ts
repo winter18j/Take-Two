@@ -7,6 +7,7 @@ export type MatchmakingEntry = {
 };
 
 export type MatchmakingMatch = {
+  botCount: number;
   entries: MatchmakingEntry[];
 };
 
@@ -34,6 +35,10 @@ export class MatchmakingQueue {
     }
   }
 
+  size() {
+    return this.entries.size;
+  }
+
   status(socketId: string, now = Date.now()) {
     const entry = this.entries.get(socketId);
     if (!entry) {
@@ -51,51 +56,28 @@ export class MatchmakingQueue {
   findMatch(now = Date.now()): MatchmakingMatch | null {
     const sorted = this.sortedEntries();
     if (sorted.length < 2) {
+      const solo = sorted[0];
+      if (solo && now - solo.joinedAt >= 10_000) {
+        this.entries.delete(solo.socketId);
+        return { botCount: 1, entries: [solo] };
+      }
       return null;
     }
 
-    let best: MatchmakingEntry[] | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (const anchor of sorted) {
-      const waitSeconds = (now - anchor.joinedAt) / 1000;
-      const maxPlayers = sorted.length >= 4 ? 4 : sorted.length >= 3 && waitSeconds >= 5 ? 3 : 2;
-      const minPlayers = waitSeconds >= 18 ? 2 : sorted.length >= 3 && waitSeconds >= 7 ? 3 : 2;
-      const tolerance = ratingTolerance(waitSeconds);
-      const candidates = sorted
-        .filter((entry) => Math.abs(entry.hiddenScore - anchor.hiddenScore) <= tolerance)
-        .sort((left, right) => {
-          const leftDistance = Math.abs(left.hiddenScore - anchor.hiddenScore);
-          const rightDistance = Math.abs(right.hiddenScore - anchor.hiddenScore);
-          return leftDistance - rightDistance || left.joinedAt - right.joinedAt;
-        })
-        .slice(0, maxPlayers);
-
-      if (candidates.length < minPlayers) {
-        continue;
-      }
-
-      const scores = candidates.map((entry) => entry.hiddenScore);
-      const spread = Math.max(...scores) - Math.min(...scores);
-      const ageBonus = Math.max(...candidates.map((entry) => now - entry.joinedAt)) / 1000;
-      const missingPenalty = (4 - candidates.length) * 140;
-      const candidateScore = spread + missingPenalty - ageBonus * 8;
-
-      if (candidateScore < bestScore) {
-        best = candidates;
-        bestScore = candidateScore;
-      }
+    const oldestWait = now - sorted[0].joinedAt;
+    if (sorted.length >= 4 && oldestWait < 2_000) {
+      return null;
     }
-
-    if (!best || best.length < 2) {
+    if (sorted.length < 4 && oldestWait < 10_000) {
       return null;
     }
 
+    const best = bestGroup(sorted, sorted.length >= 4 ? 4 : sorted.length, now);
     for (const entry of best) {
       this.entries.delete(entry.socketId);
     }
 
-    return { entries: best };
+    return { botCount: 0, entries: best };
   }
 
   private sortedEntries() {
@@ -105,4 +87,35 @@ export class MatchmakingQueue {
 
 function ratingTolerance(waitSeconds: number) {
   return Math.min(720, 90 + waitSeconds * 38);
+}
+
+function bestGroup(entries: MatchmakingEntry[], size: number, now: number) {
+  let best = entries.slice(0, size);
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const anchor of entries) {
+    const waitSeconds = (now - anchor.joinedAt) / 1000;
+    const tolerance = ratingTolerance(waitSeconds);
+    const candidates = entries
+      .filter((entry) => Math.abs(entry.hiddenScore - anchor.hiddenScore) <= tolerance)
+      .sort((left, right) => {
+        const leftDistance = Math.abs(left.hiddenScore - anchor.hiddenScore);
+        const rightDistance = Math.abs(right.hiddenScore - anchor.hiddenScore);
+        return leftDistance - rightDistance || left.joinedAt - right.joinedAt;
+      })
+      .slice(0, size);
+
+    if (candidates.length < size) {
+      continue;
+    }
+
+    const scores = candidates.map((entry) => entry.hiddenScore);
+    const spread = Math.max(...scores) - Math.min(...scores);
+    if (spread < bestScore) {
+      best = candidates;
+      bestScore = spread;
+    }
+  }
+
+  return best;
 }

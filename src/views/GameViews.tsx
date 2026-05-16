@@ -215,6 +215,8 @@ export function AuthGateScreen({
   onSignUp,
   setAuthEmail,
   setAuthPassword,
+  name,
+  setName,
 }: {
   authBusy: boolean;
   authEmail: string;
@@ -225,6 +227,8 @@ export function AuthGateScreen({
   onSignUp: () => void;
   setAuthEmail: (email: string) => void;
   setAuthPassword: (password: string) => void;
+  name: string;
+  setName: (name: string) => void;
 }) {
   return (
     <ImageBackground source={TABLE_IMAGE} resizeMode="cover" style={styles.menuBackground}>
@@ -241,6 +245,13 @@ export function AuthGateScreen({
         >
           <Text style={styles.mainMenuTitle}>Take Two</Text>
           <View style={styles.authPanel}>
+            <TextInput
+              onChangeText={setName}
+              placeholder="Player name"
+              placeholderTextColor="#8c9197"
+              style={styles.input}
+              value={name}
+            />
             <TextInput
               autoCapitalize="none"
               keyboardType="email-address"
@@ -482,6 +493,8 @@ export function MainMenuScreen({
   onSignUp,
   setAuthEmail,
   setAuthPassword,
+  name,
+  setName,
   user,
   musicMuted,
   profileOpen,
@@ -506,10 +519,12 @@ export function MainMenuScreen({
   onSignUp: () => void;
   setAuthEmail: (email: string) => void;
   setAuthPassword: (password: string) => void;
+  name: string;
+  setName: (name: string) => void;
   user: User | null;
   musicMuted: boolean;
   profileOpen: boolean;
-  matchmaking: { queued: boolean; queueSize?: number; seconds?: number };
+  matchmaking: { queued: boolean; etaSeconds?: number; seconds?: number };
   friendsOpen: boolean;
 }) {
   return (
@@ -544,6 +559,15 @@ export function MainMenuScreen({
             {user ? "Signed in with Supabase." : "Sign in to keep tokens, stats, and matchmaking later."}
           </Text>
         </View>
+        <View style={styles.nameStrip}>
+          <TextInput
+            onChangeText={setName}
+            placeholder="Player name"
+            placeholderTextColor="#8c9197"
+            style={styles.input}
+            value={name}
+          />
+        </View>
         <View style={styles.mainMenuActions}>
           <Button
             disabled={!user}
@@ -552,10 +576,10 @@ export function MainMenuScreen({
           />
           {matchmaking.queued ? (
             <Text style={styles.menuNotice}>
-              Searching closest hidden rating. Queue: {matchmaking.queueSize ?? 1}
+              Elapsed {matchmaking.seconds ?? 0}s · ETA {matchmaking.etaSeconds ?? 10}s
             </Text>
           ) : null}
-          <Button label="Play With Friends" onPress={onToggleFriends} tone="secondary" />
+          <Button disabled={matchmaking.queued} label="Play With Friends" onPress={onToggleFriends} tone="secondary" />
           {friendsOpen ? (
             <View style={styles.friendActions}>
               <Button label="Create Room" onPress={onCreateRoom} />
@@ -567,6 +591,24 @@ export function MainMenuScreen({
         {disabledText ? <Text style={styles.menuNotice}>{disabledText}</Text> : null}
         </ScrollView>
       </KeyboardAvoidingView>
+      <View style={styles.bottomNav}>
+        <View style={[styles.navItem, styles.navItemActive]}>
+          <Text style={styles.navIcon}>H</Text>
+          <Text style={styles.navLabel}>Home</Text>
+        </View>
+        <View style={[styles.navItem, styles.navItemDisabled]}>
+          <Text style={styles.navIcon}>L</Text>
+          <Text style={styles.navLabel}>Leaderboard</Text>
+        </View>
+        <View style={[styles.navItem, styles.navItemDisabled]}>
+          <Text style={styles.navIcon}>F</Text>
+          <Text style={styles.navLabel}>Friends</Text>
+        </View>
+        <View style={[styles.navItem, styles.navItemDisabled]}>
+          <Text style={styles.navIcon}>R</Text>
+          <Text style={styles.navLabel}>History</Text>
+        </View>
+      </View>
       <Modal transparent animationType="fade" visible={profileOpen} onRequestClose={onCloseProfile}>
         <View style={styles.modalScrim}>
           <View style={styles.confirmPanel}>
@@ -2435,7 +2477,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     minHeight: "100%",
     padding: 22,
-    paddingBottom: 40,
+    paddingBottom: 96,
     paddingTop: 78,
   },
   menuKeyboardView: {
@@ -2454,6 +2496,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     maxWidth: 340,
     padding: 12,
+    width: "100%",
+  },
+  nameStrip: {
+    maxWidth: 340,
     width: "100%",
   },
   accountStripText: {
@@ -2489,6 +2535,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     textAlign: "center",
+  },
+  bottomNav: {
+    alignItems: "center",
+    backgroundColor: "rgba(10, 14, 18, 0.82)",
+    borderColor: "rgba(246, 216, 120, 0.24)",
+    borderTopWidth: 1,
+    bottom: 0,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    left: 0,
+    paddingBottom: 10,
+    paddingTop: 9,
+    position: "absolute",
+    right: 0,
+    zIndex: 6,
+  },
+  navItem: {
+    alignItems: "center",
+    gap: 3,
+    minWidth: 68,
+  },
+  navItemActive: {
+    opacity: 1,
+  },
+  navItemDisabled: {
+    opacity: 0.36,
+  },
+  navIcon: {
+    color: "#f6d878",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  navLabel: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "800",
   },
   loadingPanel: {
     alignItems: "center",
