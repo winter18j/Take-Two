@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import { createClient } from "@supabase/supabase-js";
 import {
   createRoom,
+  createMatchmakingRoom,
   drawUntilPlayable,
   handleDisconnect,
   joinRoom,
@@ -15,8 +16,11 @@ import {
   playCard,
   resolvePending,
   restartRoom,
+  resumeSession,
+  requireRoom,
   startGame,
 } from "./game/rooms.js";
+import { MatchmakingQueue } from "./game/matchmaking.js";
 import { Suit, suits } from "./game/types.js";
 
 const app = express();
@@ -31,6 +35,8 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const supabase = supabaseUrl.includes("supabase.co") && !supabaseUrl.includes("YOUR_PROJECT_REF") && supabaseServiceRoleKey && !supabaseServiceRoleKey.includes("YOUR_")
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
+const matchmakingQueue = new MatchmakingQueue();
+const persistedMatches = new Set<string>();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cardsPath = path.resolve(__dirname, "../../resources/cards");
@@ -62,6 +68,75 @@ function parseSuit(value: unknown): Suit | undefined {
   return suits.find((suit) => suit === value);
 }
 
+async function getMatchmakingProfile(accountId: string) {
+  if (!supabase) {
+    return { hidden_score: 1000, random_banned_until: null as string | null };
+  }
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("hidden_score, random_banned_until")
+    .eq("id", accountId)
+    .single();
+
+  if (error) {
+    throw new Error("Could not load matchmaking profile.");
+  }
+
+  return data;
+}
+
+function tryStartMatchmakingRoom() {
+  const match = matchmakingQueue.findMatch();
+  if (!match) {
+    return;
+  }
+
+  const { room, players } = createMatchmakingRoom(io, match.entries);
+  players.forEach((player) => {
+    io.to(player.socketId).emit("session", { roomId: room.id, playerId: player.id });
+  });
+}
+
+async function persistFinishedMatch(roomId: string) {
+  if (!supabase || persistedMatches.has(roomId)) {
+    return;
+  }
+
+  const room = requireRoom(roomId);
+  if (room.status !== "finished") {
+    return;
+  }
+
+  persistedMatches.add(room.id);
+  const ranked = room.roundResults
+    .map((id) => room.players.find((player) => player.id === id))
+    .filter((player) => Boolean(player?.accountId));
+
+  await supabase.from("matches").insert({
+    room_code: room.id,
+    player_count: room.players.length,
+    winner_id: room.players.find((player) => player.id === room.winnerId)?.accountId ?? null,
+    loser_id: room.players.find((player) => player.id === room.loserId)?.accountId ?? null,
+    results: ranked.map((player, index) => ({ accountId: player?.accountId, placement: index + 1 })),
+    finished_at: new Date().toISOString(),
+  });
+
+  for (const player of ranked) {
+    if (!player?.accountId) {
+      continue;
+    }
+    const placement = room.roundResults.indexOf(player.id);
+    const delta = (ranked.length - 1 - placement) * 12 - placement * 12 + (placement === 0 ? 8 : 0);
+    await supabase.rpc("record_match_result", {
+      user_uuid: player.accountId,
+      placement_delta: delta,
+      did_win: player.id === room.winnerId,
+      did_lose: player.id === room.loserId,
+    });
+  }
+}
+
 io.use(async (socket, next) => {
   const accessToken = socket.handshake.auth?.accessToken;
   if (!supabase || typeof accessToken !== "string" || accessToken.length === 0) {
@@ -80,7 +155,7 @@ io.use(async (socket, next) => {
 io.on("connection", (socket) => {
   socket.on("createRoom", ({ name }: { name: string }) => {
     try {
-      const { room, player } = createRoom(io, socket.id, name);
+      const { room, player } = createRoom(io, socket.id, name, socket.data.accountId);
       socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
       handleSocketError(socket.id, error);
@@ -89,9 +164,51 @@ io.on("connection", (socket) => {
 
   socket.on("joinRoom", ({ roomId, name }: { roomId: string; name: string }) => {
     try {
-      const { room, player } = joinRoom(io, socket.id, roomId, name);
+      const { room, player } = joinRoom(io, socket.id, roomId, name, socket.data.accountId);
       socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("joinMatchmaking", async ({ name }: { name: string }) => {
+    try {
+      const accountId = socket.data.accountId;
+      if (!accountId) {
+        throw new Error("Sign in to play random matchmaking.");
+      }
+
+      const profile = await getMatchmakingProfile(accountId);
+      if (profile.random_banned_until && new Date(profile.random_banned_until).getTime() > Date.now()) {
+        throw new Error("Random play is temporarily locked because of recent quits.");
+      }
+
+      matchmakingQueue.add({
+        accountId,
+        hiddenScore: profile.hidden_score ?? 1000,
+        joinedAt: Date.now(),
+        name: name?.trim() || socket.data.email?.split("@")[0] || "Player",
+        socketId: socket.id,
+      });
+      const status = matchmakingQueue.status(socket.id);
+      socket.emit("matchmakingStatus", status);
+      tryStartMatchmakingRoom();
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("cancelMatchmaking", () => {
+    matchmakingQueue.removeSocket(socket.id);
+    socket.emit("matchmakingStatus", { queued: false });
+  });
+
+  socket.on("resumeSession", ({ roomId, playerId, name }: { roomId: string; playerId: string; name?: string }) => {
+    try {
+      const { room, player } = resumeSession(io, socket.id, roomId, playerId, name);
+      socket.emit("session", { roomId: room.id, playerId: player.id });
+    } catch (error) {
+      socket.emit("session", null);
       handleSocketError(socket.id, error);
     }
   });
@@ -99,6 +216,7 @@ io.on("connection", (socket) => {
   socket.on("startGame", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       startGame(io, roomId, playerId);
+      void persistFinishedMatch(roomId);
     } catch (error) {
       handleSocketError(socket.id, error);
     }
@@ -115,6 +233,7 @@ io.on("connection", (socket) => {
   socket.on("leaveRoom", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       leaveRoom(io, roomId, playerId);
+      void persistFinishedMatch(roomId);
       socket.leave(roomId);
       socket.emit("session", null);
     } catch (error) {
@@ -127,6 +246,7 @@ io.on("connection", (socket) => {
     ({ roomId, playerId, cardId, chosenSuit }: { roomId: string; playerId: string; cardId: string; chosenSuit?: string }) => {
       try {
         playCard(io, roomId, playerId, cardId, parseSuit(chosenSuit));
+        void persistFinishedMatch(roomId);
       } catch (error) {
         handleSocketError(socket.id, error);
       }
@@ -136,6 +256,7 @@ io.on("connection", (socket) => {
   socket.on("drawUntilPlayable", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       drawUntilPlayable(io, roomId, playerId);
+      void persistFinishedMatch(roomId);
     } catch (error) {
       handleSocketError(socket.id, error);
     }
@@ -144,12 +265,14 @@ io.on("connection", (socket) => {
   socket.on("resolvePending", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       resolvePending(io, roomId, playerId);
+      void persistFinishedMatch(roomId);
     } catch (error) {
       handleSocketError(socket.id, error);
     }
   });
 
   socket.on("disconnect", () => {
+    matchmakingQueue.removeSocket(socket.id);
     handleDisconnect(io, socket.id);
   });
 });

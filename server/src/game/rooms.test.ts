@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addPlayerToRoom, createRoom, drawUntilPlayable, playCard, resolveTurnTimeout, restartRoom, startGame } from "./rooms.js";
+import { addPlayerToRoom, createRoom, drawUntilPlayable, handleDisconnect, playCard, resolveTurnTimeout, restartRoom, resumeSession, startGame } from "./rooms.js";
 import { Card, Room, Suit } from "./types.js";
 
 function fakeIo() {
@@ -21,6 +21,11 @@ function fakeIo() {
   };
 
   sockets.set("socket-1", {
+    join(roomId: string) {
+      joinedRooms.push(roomId);
+    },
+  });
+  sockets.set("socket-3", {
     join(roomId: string) {
       joinedRooms.push(roomId);
     },
@@ -254,4 +259,25 @@ test("a 7 no longer chains freely after a non-7 is played after the chosen suit"
     () => playCard(io, room.id, secondPlayer.id, "swords-7", "cups"),
     /cannot play that card/,
   );
+});
+
+test("disconnected player can resume the same room session", () => {
+  const { io } = fakeIo();
+  const { room, player } = createRoom(io, "resume-socket-1", "Player 1");
+  addPlayerToRoom(room, "resume-socket-2", "Player 2");
+  room.status = "playing";
+  room.middleCard = card("sticks", 5);
+  room.discard = [room.middleCard];
+
+  handleDisconnect(io, "resume-socket-1");
+
+  assert.equal(player.isConnected, false);
+  assert.equal(room.status, "playing");
+
+  const resumed = resumeSession(io, "socket-3", room.id, player.id, "Player 1");
+
+  assert.equal(resumed.player.id, player.id);
+  assert.equal(player.socketId, "socket-3");
+  assert.equal(player.isConnected, true);
+  assert.equal(room.status, "playing");
 });

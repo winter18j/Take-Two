@@ -1,13 +1,15 @@
 import { StatusBar } from "expo-status-bar";
+import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient, Session as SupabaseSession, User } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView } from "react-native";
+import { AppState, SafeAreaView, Share } from "react-native";
 import { io, Socket } from "socket.io-client";
 import {
   ActivityItem,
   AppMode,
   AppScreen,
+  AuthGateScreen,
   Card,
   ClientGameState,
   GameTable,
@@ -31,6 +33,7 @@ import {
   trimActivityLog,
 } from "./src/views";
 
+const storedSessionKey = "take-two-session";
 const configuredServerUrl = process.env.EXPO_PUBLIC_SERVER_URL;
 const defaultServerUrl = configuredServerUrl && !configuredServerUrl.includes("YOUR_SERVER_HOST")
   ? configuredServerUrl
@@ -68,6 +71,7 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
   const [screen, setScreen] = useState<AppScreen>("menu");
+  const [authGateDone, setAuthGateDone] = useState(false);
   const [roomAction, setRoomAction] = useState<RoomAction>("create");
   const [adDue, setAdDue] = useState(false);
   const [lastAdShownAt, setLastAdShownAt] = useState(Date.now());
@@ -76,8 +80,13 @@ export default function App() {
   const [launchProgress, setLaunchProgress] = useState(0.12);
   const [launchStatus, setLaunchStatus] = useState("Connecting to server...");
   const [musicMuted, setMusicMutedState] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
+  const [matchmaking, setMatchmaking] = useState<{ queued: boolean; queueSize?: number; seconds?: number }>({ queued: false });
 
   const visibleGameRef = useRef<ClientGameState | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const queueBaseRef = useRef<ClientGameState | null>(null);
   const animationQueueRef = useRef<TableAnimation[]>([]);
   const activeAnimationRef = useRef<TableAnimation | null>(null);
@@ -87,6 +96,20 @@ export default function App() {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!matchmaking.queued) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setMatchmaking((current) => current.queued
+        ? { ...current, seconds: (current.seconds ?? 0) + 1 }
+        : current);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [matchmaking.queued]);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,6 +163,17 @@ export default function App() {
   }, [visibleGame]);
 
   useEffect(() => {
+    sessionRef.current = session;
+    if (session) {
+      void AsyncStorage.setItem(storedSessionKey, JSON.stringify(session));
+    }
+  }, [session]);
+
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  useEffect(() => {
     if (visibleGame?.status === "finished") {
       setConfettiRun((run) => run + 1);
       playSoundPlaceholder(visibleGame.loserId === session?.playerId ? "lose" : "gameEnd");
@@ -175,6 +209,9 @@ export default function App() {
       if (data.session?.user.email) {
         setName(data.session.user.email.split("@")[0] ?? "Player");
       }
+      if (data.session?.user) {
+        setAuthGateDone(true);
+      }
     });
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
@@ -183,11 +220,32 @@ export default function App() {
       if (nextSession?.user.email) {
         setName(nextSession.user.email.split("@")[0] ?? "Player");
       }
+      if (nextSession?.user) {
+        setAuthGateDone(true);
+      }
     });
 
     return () => {
       data.subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        return;
+      }
+
+      const currentSocket = socketRef.current;
+      const currentSession = sessionRef.current;
+      if (currentSocket && !currentSocket.connected) {
+        currentSocket.connect();
+      } else if (!currentSocket && currentSession) {
+        connect({ resetState: false, resume: true });
+      }
+    });
+
+    return () => subscription.remove();
   }, []);
 
   const currentPlayer = visibleGame?.players.find((player) => player.id === visibleGame.currentPlayerId);
@@ -297,28 +355,50 @@ export default function App() {
     }
   }, [visibleGame?.hand, isYourTurn, pendingSevenCard]);
 
-  function connect() {
+  function connect(options: { resetState?: boolean; resume?: boolean } = {}) {
+    const resetState = options.resetState ?? true;
     socket?.disconnect();
     setError("");
-    setVisibleGame(null);
-    setSession(null);
-    setActivityLog([]);
-    queueBaseRef.current = null;
-    animationQueueRef.current = [];
-    setActiveAnimation(null);
-    setPendingSevenCard(null);
+    if (resetState) {
+      setVisibleGame(null);
+      setSession(null);
+      setActivityLog([]);
+      queueBaseRef.current = null;
+      animationQueueRef.current = [];
+      setActiveAnimation(null);
+      setPendingSevenCard(null);
+    }
 
     const nextSocket = io(serverUrl, {
       auth: {
         accessToken: authSession?.access_token,
       },
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 600,
+      reconnectionDelayMax: 3000,
       transports: ["websocket"],
     });
 
     nextSocket.on("connect_error", () => {
       setError("Cannot connect. Make sure the server is running.");
     });
-    nextSocket.on("session", setSession);
+    nextSocket.on("connect", async () => {
+      const currentSession = sessionRef.current
+        ?? await AsyncStorage.getItem(storedSessionKey)
+          .then((value) => value ? JSON.parse(value) as Session : null)
+          .catch(() => null);
+
+      if (currentSession && (options.resume || visibleGameRef.current || screen === "room")) {
+        nextSocket.emit("resumeSession", { ...currentSession, name });
+      }
+    });
+    nextSocket.on("session", (nextSession: Session | null) => {
+      setSession(nextSession);
+      if (!nextSession) {
+        void AsyncStorage.removeItem(storedSessionKey);
+      }
+    });
     nextSocket.on("gameState", receiveGameState);
     nextSocket.on("player_draws_card", (event: ServerAnimationEvent) => {
       void event;
@@ -327,6 +407,7 @@ export default function App() {
       void event;
     });
     nextSocket.on("turn_changes", () => playSoundPlaceholder("turn"));
+    nextSocket.on("matchmakingStatus", setMatchmaking);
     nextSocket.on("errorMessage", setError);
     setSocket(nextSocket);
     return nextSocket;
@@ -352,13 +433,48 @@ export default function App() {
     setRoomAction("create");
     setJoinCode("");
     setError("");
+    setFriendsOpen(false);
     setScreen("room");
   }
 
   function openJoinRoom() {
     setRoomAction("join");
     setError("");
+    setFriendsOpen(false);
     setScreen("room");
+  }
+
+  function playRandom() {
+    if (!authUser) {
+      setError("Sign in to play random.");
+      setProfileOpen(true);
+      return;
+    }
+
+    setError("");
+    setMatchmaking({ queued: true, seconds: 0 });
+    if (!socket?.connected) {
+      const nextSocket = connect({ resetState: false });
+      nextSocket.once("connect", () => nextSocket.emit("joinMatchmaking", { name }));
+      return;
+    }
+    emit("joinMatchmaking", { name });
+  }
+
+  function cancelMatchmaking() {
+    setMatchmaking({ queued: false });
+    socket?.emit("cancelMatchmaking");
+  }
+
+  function copyRoomCode(roomId: string) {
+    void Clipboard.setStringAsync(roomId);
+    setError(`Copied room code ${roomId}.`);
+  }
+
+  async function shareRoomCode(roomId: string) {
+    await Share.share({
+      message: `Join me in Take Two app on this code: ${roomId}`,
+    });
   }
 
   function toggleMusicMute() {
@@ -369,6 +485,21 @@ export default function App() {
         .catch(() => undefined);
       return next;
     });
+  }
+
+  function continueAsGuest() {
+    setAuthGateDone(true);
+    AsyncStorage.getItem(storedSessionKey)
+      .then((value) => {
+        if (!value) {
+          return;
+        }
+        const stored = JSON.parse(value) as Session;
+        setSession(stored);
+        connect({ resetState: false, resume: true });
+        setScreen("room");
+      })
+      .catch(() => undefined);
   }
 
   async function signIn() {
@@ -386,7 +517,9 @@ export default function App() {
     setAuthBusy(false);
     if (signInError) {
       setError(signInError.message);
+      return;
     }
+    setAuthGateDone(true);
   }
 
   async function signUp() {
@@ -409,13 +542,16 @@ export default function App() {
     setAuthBusy(false);
     if (signUpError) {
       setError(signUpError.message);
+      return;
     }
+    setAuthGateDone(true);
   }
 
   async function signOut() {
     await supabase?.auth.signOut();
     setAuthEmail("");
     setAuthPassword("");
+    setAuthGateDone(false);
   }
 
   function joinRoom() {
@@ -494,10 +630,12 @@ export default function App() {
     socket?.disconnect();
     setSocket(null);
     setSession(null);
+    void AsyncStorage.removeItem(storedSessionKey);
     setVisibleGame(null);
     setActivityLog([]);
     setActiveAnimation(null);
     setPendingSevenCard(null);
+    setMatchmaking({ queued: false });
     setError("");
     queueBaseRef.current = null;
     visibleGameRef.current = null;
@@ -507,13 +645,25 @@ export default function App() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#101317" }}>
-      <StatusBar style="light" />
+      <StatusBar hidden />
       {showLaunch ? (
         <LaunchTransition
           connected={launchConnected}
           onFinish={() => setShowLaunch(false)}
           progress={launchProgress}
           status={launchStatus}
+        />
+      ) : !authGateDone ? (
+        <AuthGateScreen
+          authBusy={authBusy}
+          authEmail={authEmail}
+          authPassword={authPassword}
+          disabledText={error}
+          onContinueGuest={continueAsGuest}
+          onSignIn={signIn}
+          onSignUp={signUp}
+          setAuthEmail={setAuthEmail}
+          setAuthPassword={setAuthPassword}
         />
       ) : screen === "menu" ? (
         <MainMenuScreen
@@ -522,12 +672,20 @@ export default function App() {
           authPassword={authPassword}
           disabledText={error}
           musicMuted={musicMuted}
+          matchmaking={matchmaking}
+          friendsOpen={friendsOpen}
+          onCancelMatchmaking={cancelMatchmaking}
           onCreateRoom={openCreateRoom}
           onJoinRoom={openJoinRoom}
+          onPlayRandom={playRandom}
+          onOpenProfile={() => setProfileOpen(true)}
+          onCloseProfile={() => setProfileOpen(false)}
+          onToggleFriends={() => setFriendsOpen((open) => !open)}
           onToggleMusicMute={toggleMusicMute}
           onSignIn={signIn}
           onSignOut={signOut}
           onSignUp={signUp}
+          profileOpen={profileOpen}
           onOpenSettings={() => setScreen("room")}
           setAuthEmail={setAuthEmail}
           setAuthPassword={setAuthPassword}
@@ -571,6 +729,8 @@ export default function App() {
           onBack={cleanupToMenu}
           onCreateRoom={createRoom}
           onJoinRoom={joinRoom}
+          onCopyRoomCode={copyRoomCode}
+          onShareRoomCode={shareRoomCode}
           onStartGame={startGame}
           roomAction={roomAction}
           session={session}

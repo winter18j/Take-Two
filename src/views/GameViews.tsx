@@ -105,8 +105,10 @@ export function RoomScreen({
   joinCode,
   name,
   onBack,
+  onCopyRoomCode,
   onCreateRoom,
   onJoinRoom,
+  onShareRoomCode,
   onStartGame,
   roomAction,
   session,
@@ -171,11 +173,12 @@ export function RoomScreen({
 
         {game && appMode === "lobby" ? (
           <Panel>
-            <View style={styles.roomCodeBlock}>
+            <Pressable style={styles.roomCodeBlock} onPress={() => onCopyRoomCode(game.roomId)}>
               <Text style={styles.metaLabel}>Room code</Text>
               <Text style={styles.roomCode}>{game.roomId}</Text>
-            </View>
+            </Pressable>
             <Text style={styles.message}>{game.message}</Text>
+            <Button label="Share Code" onPress={() => onShareRoomCode(game.roomId)} tone="secondary" />
             <View style={styles.playerList}>
               {game.players.map((player) => (
                 <PlayerRow
@@ -199,6 +202,81 @@ export function RoomScreen({
         ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+export function AuthGateScreen({
+  authBusy,
+  authEmail,
+  authPassword,
+  disabledText,
+  onContinueGuest,
+  onSignIn,
+  onSignUp,
+  setAuthEmail,
+  setAuthPassword,
+}: {
+  authBusy: boolean;
+  authEmail: string;
+  authPassword: string;
+  disabledText: string;
+  onContinueGuest: () => void;
+  onSignIn: () => void;
+  onSignUp: () => void;
+  setAuthEmail: (email: string) => void;
+  setAuthPassword: (password: string) => void;
+}) {
+  return (
+    <ImageBackground source={TABLE_IMAGE} resizeMode="cover" style={styles.menuBackground}>
+      <View style={styles.menuShade} />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+        style={styles.menuKeyboardView}
+      >
+        <ScrollView
+          contentContainerStyle={styles.mainMenuContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.mainMenuTitle}>Take Two</Text>
+          <View style={styles.authPanel}>
+            <TextInput
+              autoCapitalize="none"
+              keyboardType="email-address"
+              onChangeText={setAuthEmail}
+              placeholder="Email"
+              placeholderTextColor="#8c9197"
+              style={styles.input}
+              value={authEmail}
+            />
+            <TextInput
+              onChangeText={setAuthPassword}
+              placeholder="Password"
+              placeholderTextColor="#8c9197"
+              secureTextEntry
+              style={styles.input}
+              value={authPassword}
+            />
+            <View style={styles.actions}>
+              <Button
+                disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
+                label="Sign In"
+                onPress={onSignIn}
+                tone="secondary"
+              />
+              <Button
+                disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
+                label="Create Account"
+                onPress={onSignUp}
+              />
+            </View>
+            <Button label="Continue as Guest" onPress={onContinueGuest} tone="secondary" />
+          </View>
+          {disabledText ? <Text style={styles.menuNotice}>{disabledText}</Text> : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </ImageBackground>
   );
 }
 
@@ -241,6 +319,7 @@ export function GameTable({
   const [quitOpen, setQuitOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [dealRun, setDealRun] = useState(0);
+  const [introRun, setIntroRun] = useState(0);
   const lastDealMiddleRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -251,6 +330,7 @@ export function GameTable({
     if (game.status === "playing" && game.message === "Game started." && game.middleCard?.id !== lastDealMiddleRef.current) {
       lastDealMiddleRef.current = game.middleCard?.id ?? null;
       setDealRun((run) => run + 1);
+      setIntroRun((run) => run + 1);
     }
   }, [game.message, game.middleCard?.id, game.status]);
 
@@ -364,6 +444,7 @@ export function GameTable({
           onDone={onAnimationDone}
         />
         <DealAnimationLayer positions={positions} run={dealRun} seats={seats} serverUrl={serverUrl} />
+        <MatchIntroOverlay players={game.players} run={introRun} />
         <SuitChoiceOverlay
           card={pendingSevenCard}
           onChoose={onSevenSuit}
@@ -389,7 +470,12 @@ export function MainMenuScreen({
   disabledText,
   onCreateRoom,
   onJoinRoom,
+  onCloseProfile,
+  onOpenProfile,
+  onCancelMatchmaking,
+  onPlayRandom,
   onToggleMusicMute,
+  onToggleFriends,
   onOpenSettings,
   onSignIn,
   onSignOut,
@@ -398,6 +484,9 @@ export function MainMenuScreen({
   setAuthPassword,
   user,
   musicMuted,
+  profileOpen,
+  matchmaking,
+  friendsOpen,
 }: {
   authBusy: boolean;
   authEmail: string;
@@ -405,7 +494,12 @@ export function MainMenuScreen({
   disabledText: string;
   onCreateRoom: () => void;
   onJoinRoom: () => void;
+  onCloseProfile: () => void;
+  onOpenProfile: () => void;
+  onCancelMatchmaking: () => void;
+  onPlayRandom: () => void;
   onToggleMusicMute: () => void;
+  onToggleFriends: () => void;
   onOpenSettings: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -414,10 +508,17 @@ export function MainMenuScreen({
   setAuthPassword: (password: string) => void;
   user: User | null;
   musicMuted: boolean;
+  profileOpen: boolean;
+  matchmaking: { queued: boolean; queueSize?: number; seconds?: number };
+  friendsOpen: boolean;
 }) {
   return (
     <ImageBackground source={TABLE_IMAGE} resizeMode="cover" style={styles.menuBackground}>
       <View style={styles.menuShade} />
+      <Pressable onPress={onOpenProfile} style={styles.profileButton}>
+        <View style={styles.profileIconHead} />
+        <View style={styles.profileIconBody} />
+      </Pressable>
       <Pressable onPress={onOpenSettings} style={styles.settingsButton}>
         <Text style={styles.settingsButtonText}>Settings</Text>
       </Pressable>
@@ -443,57 +544,79 @@ export function MainMenuScreen({
             {user ? "Signed in with Supabase." : "Sign in to keep tokens, stats, and matchmaking later."}
           </Text>
         </View>
-        {!user ? (
-          <View style={styles.authPanel}>
-            <TextInput
-              autoCapitalize="none"
-              keyboardType="email-address"
-              onChangeText={setAuthEmail}
-              placeholder="Email"
-              placeholderTextColor="#8c9197"
-              style={styles.input}
-              value={authEmail}
-            />
-            <TextInput
-              onChangeText={setAuthPassword}
-              placeholder="Password"
-              placeholderTextColor="#8c9197"
-              secureTextEntry
-              style={styles.input}
-              value={authPassword}
-            />
-            <View style={styles.actions}>
-              <Button
-                disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
-                label="Sign In"
-                onPress={onSignIn}
-                tone="secondary"
-              />
-              <Button
-                disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
-                label="Create Account"
-                onPress={onSignUp}
-              />
-            </View>
-          </View>
-        ) : (
-          <View style={styles.mainMenuActions}>
-            <Button label="Sign Out" onPress={onSignOut} tone="secondary" />
-          </View>
-        )}
         <View style={styles.mainMenuActions}>
-          <Button disabled label="Play Random" onPress={() => undefined} tone="secondary" />
-          <Button label="Create Room" onPress={onCreateRoom} />
-          <Button label="Join Room" onPress={onJoinRoom} tone="secondary" />
-          <Button disabled label="Watch Ad +1 Token" onPress={() => undefined} tone="secondary" />
-          <Button disabled label="Buy Tokens" onPress={() => undefined} tone="secondary" />
-          <Button disabled label="Remove Ads $0.99" onPress={() => undefined} tone="secondary" />
-          <Button disabled label="Premium $5.99/mo" onPress={() => undefined} tone="secondary" />
+          <Button
+            disabled={!user}
+            label={matchmaking.queued ? `Finding Match ${matchmaking.seconds ?? 0}s` : "Play Random"}
+            onPress={matchmaking.queued ? onCancelMatchmaking : onPlayRandom}
+          />
+          {matchmaking.queued ? (
+            <Text style={styles.menuNotice}>
+              Searching closest hidden rating. Queue: {matchmaking.queueSize ?? 1}
+            </Text>
+          ) : null}
+          <Button label="Play With Friends" onPress={onToggleFriends} tone="secondary" />
+          {friendsOpen ? (
+            <View style={styles.friendActions}>
+              <Button label="Create Room" onPress={onCreateRoom} />
+              <Button label="Join Room" onPress={onJoinRoom} tone="secondary" />
+            </View>
+          ) : null}
           <Button disabled label="Customize" onPress={() => undefined} tone="secondary" />
         </View>
         {disabledText ? <Text style={styles.menuNotice}>{disabledText}</Text> : null}
         </ScrollView>
       </KeyboardAvoidingView>
+      <Modal transparent animationType="fade" visible={profileOpen} onRequestClose={onCloseProfile}>
+        <View style={styles.modalScrim}>
+          <View style={styles.confirmPanel}>
+            <Text style={styles.confirmTitle}>Profile</Text>
+            <Text style={styles.confirmText}>
+              {user?.email ? user.email : "Playing as guest"}
+            </Text>
+            {!user ? (
+              <>
+                <TextInput
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  onChangeText={setAuthEmail}
+                  placeholder="Email"
+                  placeholderTextColor="#8c9197"
+                  style={styles.input}
+                  value={authEmail}
+                />
+                <TextInput
+                  onChangeText={setAuthPassword}
+                  placeholder="Password"
+                  placeholderTextColor="#8c9197"
+                  secureTextEntry
+                  style={styles.input}
+                  value={authPassword}
+                />
+                <View style={styles.confirmActions}>
+                  <Button label="Close" onPress={onCloseProfile} tone="secondary" />
+                  <Button
+                    disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
+                    label="Sign In"
+                    onPress={onSignIn}
+                  />
+                </View>
+                <Button
+                  disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
+                  label="Create Account"
+                  onPress={onSignUp}
+                  tone="secondary"
+                />
+              </>
+            ) : (
+              <View style={styles.confirmActions}>
+                <Button label="Close" onPress={onCloseProfile} tone="secondary" />
+                <Button label="Disconnect" onPress={onSignOut} tone="danger" />
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </ImageBackground>
   );
 }
@@ -1274,7 +1397,60 @@ function DealCardFlight({
   );
 }
 
-function Panel({ children }: { children: React.ReactNode }) {
+function MatchIntroOverlay({ players, run }: { players: Player[]; run: number }) {
+  const [visible, setVisible] = useState(false);
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (run <= 0) {
+      return;
+    }
+
+    setVisible(true);
+    progress.setValue(0);
+    Animated.sequence([
+      Animated.timing(progress, {
+        duration: 360,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.delay(980),
+      Animated.timing(progress, {
+        duration: 320,
+        toValue: 0,
+        useNativeDriver: true,
+      }),
+    ]).start(() => setVisible(false));
+  }, [progress, run]);
+
+  if (!visible) {
+    return null;
+  }
+
+  const scale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.92, 1],
+  });
+  const translateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [24, 0],
+  });
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.matchIntroLayer, { opacity: progress }]}>
+      <Animated.View style={[styles.matchIntroPanel, { transform: [{ scale }, { translateY }] }]}>
+        {players.map((player, index) => (
+          <View key={player.id} style={styles.matchIntroPlayer}>
+            <Text style={styles.matchIntroName} numberOfLines={1}>{player.name}</Text>
+            {index < players.length - 1 ? <Text style={styles.matchIntroVs}>VS</Text> : null}
+          </View>
+        ))}
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+function Panel({ children }: { children: ReactNode }) {
   const fade = useRef(new Animated.Value(0)).current;
   const lift = useRef(new Animated.Value(10)).current;
 
@@ -1932,8 +2108,10 @@ type RoomScreenProps = {
   joinCode: string;
   name: string;
   onBack: () => void;
+  onCopyRoomCode: (roomId: string) => void;
   onCreateRoom: () => void;
   onJoinRoom: () => void;
+  onShareRoomCode: (roomId: string) => void;
   onStartGame: () => void;
   roomAction: RoomAction;
   session: Session | null;
@@ -2190,6 +2368,34 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(10, 14, 18, 0.44)",
   },
+  profileButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(16, 19, 23, 0.72)",
+    borderColor: "rgba(255,255,255,0.18)",
+    borderRadius: 22,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: "center",
+    left: 16,
+    position: "absolute",
+    top: 18,
+    width: 44,
+    zIndex: 5,
+  },
+  profileIconHead: {
+    backgroundColor: "#ffffff",
+    borderRadius: 6,
+    height: 12,
+    marginBottom: 3,
+    width: 12,
+  },
+  profileIconBody: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+    height: 10,
+    width: 22,
+  },
   settingsButton: {
     alignItems: "center",
     backgroundColor: "rgba(16, 19, 23, 0.72)",
@@ -2211,7 +2417,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     justifyContent: "center",
-    left: 16,
+    left: 68,
     minHeight: 44,
     paddingHorizontal: 14,
     position: "absolute",
@@ -2271,6 +2477,11 @@ const styles = StyleSheet.create({
   mainMenuActions: {
     gap: 12,
     maxWidth: 340,
+    width: "100%",
+  },
+  friendActions: {
+    gap: 10,
+    paddingHorizontal: 12,
     width: "100%",
   },
   menuNotice: {
@@ -2731,6 +2942,41 @@ const styles = StyleSheet.create({
   dealLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 19,
+  },
+  matchIntroLayer: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.34)",
+    justifyContent: "center",
+    zIndex: 23,
+  },
+  matchIntroPanel: {
+    alignItems: "center",
+    backgroundColor: "rgba(16, 19, 23, 0.88)",
+    borderColor: "rgba(246, 216, 120, 0.72)",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 8,
+    maxWidth: 340,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    width: "84%",
+  },
+  matchIntroPlayer: {
+    alignItems: "center",
+    width: "100%",
+  },
+  matchIntroName: {
+    color: "#ffffff",
+    fontSize: 20,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  matchIntroVs: {
+    color: "#f6d878",
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 6,
   },
   endOverlay: {
     alignItems: "center",

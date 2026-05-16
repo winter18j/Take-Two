@@ -60,6 +60,7 @@ function getNextActiveIndex(room: Room, fromIndex = room.currentPlayerIndex) {
 function publicPlayers(room: Room) {
   return room.players.map((player) => ({
     id: player.id,
+    accountId: player.accountId,
     name: player.name,
     handCount: player.hand.length,
     isHost: player.isHost,
@@ -244,7 +245,7 @@ function finishRoundIfNeeded(room: Room) {
     room.roundResults.push(loser.id);
   }
 
-  room.status = "finished";
+    room.status = "finished";
   room.pendingAction = null;
   room.turnExpiresAt = null;
   room.loserId = loser?.id ?? null;
@@ -333,7 +334,7 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   return true;
 }
 
-export function createRoom(io: Server, socketId: string, name: string) {
+export function createRoom(io: Server, socketId: string, name: string, accountId?: string) {
   const room: Room = {
     id: roomCode(),
     status: "lobby",
@@ -354,7 +355,7 @@ export function createRoom(io: Server, socketId: string, name: string) {
     timer: null,
   };
 
-  const player = addPlayerToRoom(room, socketId, name, true);
+  const player = addPlayerToRoom(room, socketId, name, true, accountId);
   room.scores[player.id] = 0;
   rooms.set(room.id, room);
   io.sockets.sockets.get(socketId)?.join(room.id);
@@ -362,9 +363,10 @@ export function createRoom(io: Server, socketId: string, name: string) {
   return { room, player };
 }
 
-export function addPlayerToRoom(room: Room, socketId: string, name: string, isHost = false) {
+export function addPlayerToRoom(room: Room, socketId: string, name: string, isHost = false, accountId?: string) {
   const player: Player = {
     id: randomUUID(),
+    accountId,
     socketId,
     name: name.trim() || "Player",
     hand: [],
@@ -379,7 +381,7 @@ export function addPlayerToRoom(room: Room, socketId: string, name: string, isHo
   return player;
 }
 
-export function joinRoom(io: Server, socketId: string, roomId: string, name: string) {
+export function joinRoom(io: Server, socketId: string, roomId: string, name: string, accountId?: string) {
   const room = rooms.get(roomId.toUpperCase());
 
   if (!room) {
@@ -394,11 +396,50 @@ export function joinRoom(io: Server, socketId: string, roomId: string, name: str
     throw new Error("This room already has 4 players.");
   }
 
-  const player = addPlayerToRoom(room, socketId, name);
+  const player = addPlayerToRoom(room, socketId, name, false, accountId);
   io.sockets.sockets.get(socketId)?.join(room.id);
   room.message = `${player.name} joined.`;
   emitRoom(io, room);
   return { room, player };
+}
+
+export function resumeSession(io: Server, socketId: string, roomId: string, playerId: string, name?: string) {
+  const room = requireRoom(roomId);
+  const player = requirePlayer(room, playerId);
+
+  player.socketId = socketId;
+  player.isConnected = true;
+  if (name?.trim()) {
+    player.name = name.trim();
+  }
+
+  io.sockets.sockets.get(socketId)?.join(room.id);
+  room.message = `${player.name} reconnected.`;
+  if (room.status === "playing") {
+    scheduleTurnTimer(io, room);
+  }
+  emitRoom(io, room);
+  return { room, player };
+}
+
+export function createMatchmakingRoom(
+  io: Server,
+  entries: Array<{ accountId: string; name: string; socketId: string }>,
+) {
+  if (entries.length < 2 || entries.length > 4) {
+    throw new Error("Matchmaking rooms need 2 to 4 players.");
+  }
+
+  const { room, player: host } = createRoom(io, entries[0].socketId, entries[0].name, entries[0].accountId);
+  const players = [host];
+
+  for (const entry of entries.slice(1)) {
+    players.push(addPlayerToRoom(room, entry.socketId, entry.name, false, entry.accountId));
+    io.sockets.sockets.get(entry.socketId)?.join(room.id);
+  }
+
+  startRound(io, room);
+  return { room, players };
 }
 
 export function startGame(io: Server, roomId: string, playerId: string) {
@@ -619,12 +660,12 @@ export function handleDisconnect(io: Server, socketId: string) {
       player.isConnected = false;
       room.message = `${player.name} disconnected.`;
       if (room.status === "playing" && !hasFinished(room, player)) {
-        if (activePlayers(room).length <= 1) {
-          finishRoundByForfeit(room, player);
-          clearTimer(room);
-        } else if (getCurrentPlayer(room)?.id === player.id) {
+        if (getCurrentPlayer(room)?.id === player.id && activePlayers(room).length > 1) {
           moveToNext(room);
           scheduleTurnTimer(io, room);
+        } else if (activePlayers(room).length <= 1) {
+          clearTimer(room);
+          room.turnExpiresAt = null;
         }
       }
       emitRoom(io, room);

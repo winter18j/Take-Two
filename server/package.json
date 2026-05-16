@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "node --import tsx --test src/game/rooms.test.ts",
+    "test": "node --import tsx --test src/game/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],

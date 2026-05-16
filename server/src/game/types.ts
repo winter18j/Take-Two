@@ -18,6 +18,7 @@ export type Card = {
 
 export type PublicPlayer = {
   id: string;
+  accountId?: string;
   name: string;
   handCount: number;
   isHost: boolean;
