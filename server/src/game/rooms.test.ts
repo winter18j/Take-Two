@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addPlayerToRoom, createRoom, drawUntilPlayable, handleDisconnect, playCard, resolveTurnTimeout, restartRoom, resumeSession, startGame } from "./rooms.js";
+import { addPlayerToRoom, createRoom, drawUntilPlayable, handleDisconnect, playCard, randomizePlayerOrderForRound, resolveTurnTimeout, restartRoom, resumeSession, startGame } from "./rooms.js";
 import { Card, Room, Suit } from "./types.js";
 
 function fakeIo() {
@@ -125,6 +125,22 @@ test("startGame does not choose an action card as the first middle card", () => 
   assert.notEqual(room.middleCard.rank, 2);
   assert.notEqual(room.middleCard.rank, 7);
   assert.equal(room.chosenSuit, null);
+});
+
+test("round player order can be randomized before dealing", () => {
+  const { io } = fakeIo();
+  const { room, player } = createRoom(io, "socket-1", "Player 1");
+  const secondPlayer = addPlayerToRoom(room, "socket-2", "Player 2");
+  const thirdPlayer = addPlayerToRoom(room, "socket-3", "Player 3");
+  const fourthPlayer = addPlayerToRoom(room, "socket-4", "Player 4");
+
+  randomizePlayerOrderForRound(room, () => 0);
+
+  assert.deepEqual(
+    room.players.map((candidate) => candidate.id),
+    [secondPlayer.id, thirdPlayer.id, fourthPlayer.id, player.id],
+  );
+  assert.equal(room.currentPlayerIndex, 0);
 });
 
 test("draw reshuffles played cards except the last played card when the deck is empty", () => {

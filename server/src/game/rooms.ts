@@ -225,6 +225,18 @@ function moveToNext(room: Room, fromIndex = room.currentPlayerIndex) {
   room.currentPlayerIndex = getNextActiveIndex(room, fromIndex);
 }
 
+export function randomizePlayerOrderForRound(room: Room, random = Math.random) {
+  const players = [...room.players];
+
+  for (let index = players.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [players[index], players[swapIndex]] = [players[swapIndex], players[index]];
+  }
+
+  room.players = players;
+  room.currentPlayerIndex = 0;
+}
+
 function finishPlayerIfNeeded(room: Room, player: Player) {
   if (player.hand.length > 0 || hasFinished(room, player)) {
     return false;
@@ -522,7 +534,7 @@ export function createMatchmakingRoom(
     players.push(addBotToRoom(room));
   }
 
-  startRound(io, room);
+  startRound(io, room, { randomizePlayers: true });
   maybeRunBotTurn(io, room);
   return { room, players };
 }
@@ -539,10 +551,14 @@ export function startGame(io: Server, roomId: string, playerId: string) {
     throw new Error("You need at least 2 players.");
   }
 
-  startRound(io, room);
+  startRound(io, room, { randomizePlayers: true });
 }
 
-function startRound(io: Server, room: Room) {
+function startRound(io: Server, room: Room, options: { randomizePlayers?: boolean } = {}) {
+  if (options.randomizePlayers) {
+    randomizePlayerOrderForRound(room);
+  }
+
   room.deck = shuffle(createDeck());
   room.discard = [];
   room.players.forEach((player) => {
@@ -590,7 +606,7 @@ export function restartRoom(io: Server, roomId: string, playerId: string) {
   }
 
   if (connectedPlayers.every((player) => room.rematchRequests.includes(player.id))) {
-    startRound(io, room);
+    startRound(io, room, { randomizePlayers: true });
     return;
   }
 

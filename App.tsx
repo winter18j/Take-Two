@@ -14,7 +14,6 @@ import {
   ClientGameState,
   GameTable,
   LaunchTransition,
-  MainMenuScreen,
   Point,
   RESPONSE_WINDOW_SECONDS,
   RoomAction,
@@ -32,6 +31,7 @@ import {
   suitLabel,
   trimActivityLog,
 } from "./src/views";
+import { MainMenuScreen } from "./src/screens/MainMenuScreen";
 
 const storedSessionKey = "take-two-session";
 const storedNameKey = "take-two-player-name";
@@ -88,6 +88,8 @@ export default function App() {
   const visibleGameRef = useRef<ClientGameState | null>(null);
   const sessionRef = useRef<Session | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const screenRef = useRef<AppScreen>("menu");
+  const nameRef = useRef("Player");
   const queueBaseRef = useRef<ClientGameState | null>(null);
   const animationQueueRef = useRef<TableAnimation[]>([]);
   const activeAnimationRef = useRef<TableAnimation | null>(null);
@@ -181,6 +183,14 @@ export default function App() {
   }, [visibleGame]);
 
   useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
+
+  useEffect(() => {
+    nameRef.current = name;
+  }, [name]);
+
+  useEffect(() => {
     sessionRef.current = session;
     if (session) {
       void AsyncStorage.setItem(storedSessionKey, JSON.stringify(session));
@@ -250,9 +260,13 @@ export default function App() {
 
       const currentSocket = socketRef.current;
       const currentSession = sessionRef.current;
-      if (currentSocket && !currentSocket.connected) {
+      const shouldResumeRoom = Boolean(currentSession && (visibleGameRef.current || screenRef.current === "room"));
+
+      if (currentSocket?.connected && currentSession && shouldResumeRoom) {
+        currentSocket.emit("resumeSession", { ...currentSession, name: nameRef.current });
+      } else if (currentSocket && !currentSocket.connected) {
         currentSocket.connect();
-      } else if (!currentSocket && currentSession) {
+      } else if (!currentSocket && currentSession && shouldResumeRoom) {
         connect({ resetState: false, resume: true });
       }
     });
@@ -401,8 +415,8 @@ export default function App() {
           .then((value) => value ? JSON.parse(value) as Session : null)
           .catch(() => null);
 
-      if (currentSession && (options.resume || visibleGameRef.current || screen === "room")) {
-        nextSocket.emit("resumeSession", { ...currentSession, name });
+      if (currentSession && (options.resume || visibleGameRef.current || screenRef.current === "room")) {
+        nextSocket.emit("resumeSession", { ...currentSession, name: nameRef.current });
       }
     });
     nextSocket.on("session", (nextSession: Session | null) => {
@@ -719,18 +733,12 @@ export default function App() {
           disabledText={error}
           musicMuted={musicMuted}
           matchmaking={matchmaking}
-          friendsOpen={friendsOpen}
           onCancelMatchmaking={cancelMatchmaking}
           onCreateRoom={openCreateRoom}
           onJoinRoom={openJoinRoom}
           onPlayRandom={playRandom}
           onOpenProfile={() => setProfileOpen(true)}
           onCloseProfile={() => setProfileOpen(false)}
-          onToggleFriends={() => {
-            if (!matchmaking.queued) {
-              setFriendsOpen((open) => !open);
-            }
-          }}
           name={name}
           setName={setName}
           onToggleMusicMute={toggleMusicMute}
@@ -738,10 +746,11 @@ export default function App() {
           onSignOut={signOut}
           onSignUp={signUp}
           profileOpen={profileOpen}
-          onOpenSettings={() => setScreen("room")}
+          onOpenSettings={() => setError("Settings coming soon.")}
           setAuthEmail={setAuthEmail}
           setAuthPassword={setAuthPassword}
           user={authUser}
+          onShop={() => setError("Shop coming soon.")}
         />
       ) : (
         <RoomScreen
