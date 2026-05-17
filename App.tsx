@@ -1,9 +1,10 @@
 import { StatusBar } from "expo-status-bar";
+import * as NavigationBar from "expo-navigation-bar";
 import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient, Session as SupabaseSession, User } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, SafeAreaView, Share } from "react-native";
+import { AppState, Platform, SafeAreaView, Share } from "react-native";
 import { io, Socket } from "socket.io-client";
 import {
   ActivityItem,
@@ -94,6 +95,15 @@ export default function App() {
   const animationQueueRef = useRef<TableAnimation[]>([]);
   const activeAnimationRef = useRef<TableAnimation | null>(null);
   const playedCardLayoutRef = useRef<{ cardId: string; point: Point } | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") {
+      return;
+    }
+
+    void NavigationBar.setBehaviorAsync("overlay-swipe").catch(() => undefined);
+    void NavigationBar.setVisibilityAsync("hidden").catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);

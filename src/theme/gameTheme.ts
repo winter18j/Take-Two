@@ -5,6 +5,8 @@ export const gameTheme = {
     gold: "#D8A84F",
     goldLight: "#F3D58A",
     cream: "#FFF4D6",
+    purple: "#6F3BB5",
+    purpleLight: "#D9B6FF",
     red: "#8F2633",
     green: "#1F6B4A",
     overlay: "rgba(0,0,0,0.35)",

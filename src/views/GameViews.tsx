@@ -17,6 +17,8 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { MenuButton } from "../components/MenuButton";
+import { gameTheme } from "../theme/gameTheme";
 import { CardImageEngine } from "./rendering/CardImageEngine";
 
 export const RESPONSE_WINDOW_SECONDS = 10;
@@ -36,6 +38,7 @@ const DECK_HEIGHT = Math.round(CARD_HEIGHT * 0.5);
 const STACK_WIDTH = Math.round(116 * 1.25);
 const STACK_HEIGHT = Math.round(174 * 1.25);
 const TABLE_IMAGE = require("../../resources/cards-opti/table-1.png");
+const ROOM_MENU_IMAGE = require("../../resources/backgrounds/menu-rooms.png");
 const CARD_BACK_IMAGE = require("../../resources/cards-opti/cardback.webp");
 const cardImages: Record<string, number> = {
   "bastos-1": require("../../resources/cards-opti/bastos-1.webp"),
@@ -116,92 +119,96 @@ export function RoomScreen({
   setName,
 }: RoomScreenProps) {
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
-      style={styles.keyboardView}
-    >
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.menuContent}
+    <ImageBackground source={ROOM_MENU_IMAGE} resizeMode="cover" style={styles.roomMenuBackground}>
+      <View style={styles.roomMenuShade} />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+        style={styles.roomMenuKeyboard}
       >
-        <View style={styles.topBar}>
-          <View>
-            <Text style={styles.appTitle}>Take Two</Text>
-            <Text style={styles.appSubtitle}>
-              {appMode === "connect" ? "Create a room or join one." : "Waiting room"}
-            </Text>
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.roomMenuContent}
+        >
+          <View style={styles.roomTopBar}>
+            <View>
+              <Text style={styles.roomTitle}>Rooms</Text>
+              <Text style={styles.roomSubtitle}>
+                {appMode === "connect" ? "Create or join a private table." : "Waiting for players"}
+              </Text>
+            </View>
+            <View style={[styles.statusDot, connected ? styles.onlineDot : null]} />
           </View>
-          <View style={[styles.statusDot, connected ? styles.onlineDot : null]} />
-        </View>
-        <Button label="Main Menu" onPress={onBack} tone="secondary" />
+          <MenuButton label="Main Menu" onPress={onBack} size="small" variant="secondary" />
 
-        {appMode === "connect" ? (
-          <Panel>
-            <Text style={styles.panelTitle}>
-              {roomAction === "create" ? "Create Room" : "Join Room"}
-            </Text>
-            <TextInput
-              onChangeText={setName}
-              placeholder="Your name"
-              placeholderTextColor="#8c9197"
-              style={styles.input}
-              value={name}
-            />
-            {roomAction === "join" ? (
+          {appMode === "connect" ? (
+            <View style={styles.roomPanel}>
+              <Text style={styles.roomPanelTitle}>
+                {roomAction === "create" ? "Create Room" : "Join Room"}
+              </Text>
               <TextInput
-                autoCapitalize="characters"
-                onChangeText={setJoinCode}
-                placeholder="Room code"
-                placeholderTextColor="#8c9197"
-                style={[styles.input, styles.joinInput]}
-                value={joinCode}
+                onChangeText={setName}
+                placeholder="Your name"
+                placeholderTextColor="rgba(255, 244, 214, 0.52)"
+                style={styles.roomInput}
+                value={name}
               />
-            ) : null}
-            <View style={styles.actions}>
-              <Button label="Back" onPress={onBack} tone="secondary" />
-              {roomAction === "create" ? (
-                <Button label="Create Room" onPress={onCreateRoom} disabled={!name.trim()} />
+              {roomAction === "join" ? (
+                <TextInput
+                  autoCapitalize="characters"
+                  onChangeText={setJoinCode}
+                  placeholder="Room code"
+                  placeholderTextColor="rgba(255, 244, 214, 0.52)"
+                  style={styles.roomInput}
+                  value={joinCode}
+                />
+              ) : null}
+              <View style={styles.roomActions}>
+                <MenuButton label="Back" onPress={onBack} size="small" variant="secondary" />
+                {roomAction === "create" ? (
+                  <MenuButton label="Create" onPress={onCreateRoom} disabled={!name.trim()} size="small" />
+                ) : (
+                  <MenuButton label="Join" onPress={onJoinRoom} disabled={!name.trim() || !joinCode.trim()} size="small" />
+                )}
+              </View>
+              {error ? <Text style={styles.roomError}>{error}</Text> : null}
+            </View>
+          ) : null}
+
+          {game && appMode === "lobby" ? (
+            <View style={styles.roomPanel}>
+              <Pressable style={styles.premiumRoomCodeBlock} onPress={() => onCopyRoomCode(game.roomId)}>
+                <Text style={styles.premiumMetaLabel}>Room code</Text>
+                <Text style={styles.premiumRoomCode}>{game.roomId}</Text>
+                <Text style={styles.roomTapHint}>Tap to copy</Text>
+              </Pressable>
+              <Text style={styles.roomMessage}>{game.message}</Text>
+              <MenuButton label="Share Code" onPress={() => onShareRoomCode(game.roomId)} size="small" variant="secondary" />
+              <View style={styles.playerList}>
+                {game.players.map((player) => (
+                  <PlayerRow
+                    key={player.id}
+                    active={player.id === game.currentPlayerId}
+                    isYou={player.id === session?.playerId}
+                    player={player}
+                  />
+                ))}
+              </View>
+              {game.youAreHost ? (
+                <MenuButton
+                  label="Start Game"
+                  onPress={onStartGame}
+                  disabled={game.players.length < 2}
+                />
               ) : (
-                <Button label="Join Room" onPress={onJoinRoom} disabled={!name.trim() || !joinCode.trim()} />
+                <Text style={styles.roomHelper}>The host will start once there are at least 2 players.</Text>
               )}
             </View>
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-          </Panel>
-        ) : null}
-
-        {game && appMode === "lobby" ? (
-          <Panel>
-            <Pressable style={styles.roomCodeBlock} onPress={() => onCopyRoomCode(game.roomId)}>
-              <Text style={styles.metaLabel}>Room code</Text>
-              <Text style={styles.roomCode}>{game.roomId}</Text>
-            </Pressable>
-            <Text style={styles.message}>{game.message}</Text>
-            <Button label="Share Code" onPress={() => onShareRoomCode(game.roomId)} tone="secondary" />
-            <View style={styles.playerList}>
-              {game.players.map((player) => (
-                <PlayerRow
-                  key={player.id}
-                  active={player.id === game.currentPlayerId}
-                  isYou={player.id === session?.playerId}
-                  player={player}
-                />
-              ))}
-            </View>
-            {game.youAreHost ? (
-              <Button
-                label="Start Game"
-                onPress={onStartGame}
-                disabled={game.players.length < 2}
-              />
-            ) : (
-              <Text style={styles.helper}>The host will start once there are at least 2 players.</Text>
-            )}
-          </Panel>
-        ) : null}
-      </ScrollView>
-    </KeyboardAvoidingView>
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </ImageBackground>
   );
 }
 
@@ -2246,6 +2253,118 @@ const styles = StyleSheet.create({
     padding: 16,
     width: "100%",
   },
+  roomMenuBackground: {
+    flex: 1,
+  },
+  roomMenuShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.34)",
+  },
+  roomMenuKeyboard: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === "android" ? 34 : 26,
+  },
+  roomMenuContent: {
+    flexGrow: 1,
+    gap: 16,
+    justifyContent: "center",
+    paddingBottom: 28,
+    paddingTop: 18,
+  },
+  roomTopBar: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  roomTitle: {
+    color: gameTheme.colors.cream,
+    fontSize: 36,
+    fontWeight: "900",
+    textShadowColor: "rgba(216, 168, 79, 0.55)",
+    textShadowOffset: { height: 2, width: 0 },
+    textShadowRadius: 10,
+  },
+  roomSubtitle: {
+    color: "rgba(255, 244, 214, 0.78)",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  roomPanel: {
+    backgroundColor: "rgba(8, 11, 22, 0.72)",
+    borderColor: "rgba(243, 213, 138, 0.36)",
+    borderRadius: 24,
+    borderWidth: 1,
+    gap: 14,
+    padding: 16,
+  },
+  roomPanelTitle: {
+    color: gameTheme.colors.cream,
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  roomInput: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(243, 213, 138, 0.34)",
+    borderRadius: 16,
+    borderWidth: 1,
+    color: gameTheme.colors.cream,
+    fontSize: 16,
+    fontWeight: "800",
+    minHeight: 52,
+    paddingHorizontal: 14,
+  },
+  roomActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  roomError: {
+    color: "#ffb4aa",
+    fontSize: 13,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  premiumRoomCodeBlock: {
+    alignItems: "center",
+    backgroundColor: "rgba(9, 20, 42, 0.72)",
+    borderColor: "rgba(243, 213, 138, 0.6)",
+    borderRadius: 24,
+    borderWidth: 2,
+    padding: 16,
+  },
+  premiumMetaLabel: {
+    color: "rgba(255, 244, 214, 0.72)",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  premiumRoomCode: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 38,
+    fontWeight: "900",
+    letterSpacing: 0,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { height: 2, width: 0 },
+    textShadowRadius: 6,
+  },
+  roomTapHint: {
+    color: "rgba(255, 244, 214, 0.62)",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  roomMessage: {
+    color: gameTheme.colors.cream,
+    fontSize: 14,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  roomHelper: {
+    color: "rgba(255, 244, 214, 0.68)",
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+  },
   topBar: {
     alignItems: "center",
     flexDirection: "row",
@@ -2340,7 +2459,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   helper: {
-    color: "#68717a",
+    color: "rgba(255, 244, 214, 0.68)",
     fontSize: 13,
   },
   message: {
@@ -2371,27 +2490,29 @@ const styles = StyleSheet.create({
   },
   playerRow: {
     alignItems: "center",
-    backgroundColor: "#fbfaf7",
-    borderColor: "#e2ddd4",
-    borderRadius: 8,
+    backgroundColor: "rgba(8, 11, 22, 0.68)",
+    borderColor: "rgba(243, 213, 138, 0.28)",
+    borderRadius: 16,
     borderWidth: 1,
     flexDirection: "row",
     gap: 10,
     padding: 10,
   },
   activePlayerRow: {
-    borderColor: "#1f8a5b",
+    borderColor: gameTheme.colors.goldLight,
   },
   avatar: {
     alignItems: "center",
-    backgroundColor: "#171b1f",
+    backgroundColor: "rgba(216, 168, 79, 0.2)",
+    borderColor: "rgba(243, 213, 138, 0.58)",
+    borderWidth: 1,
     borderRadius: 18,
     height: 36,
     justifyContent: "center",
     width: 36,
   },
   avatarText: {
-    color: "#ffffff",
+    color: gameTheme.colors.cream,
     fontSize: 15,
     fontWeight: "900",
   },
@@ -2399,7 +2520,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   playerName: {
-    color: "#171b1f",
+    color: gameTheme.colors.cream,
     fontSize: 15,
     fontWeight: "900",
   },

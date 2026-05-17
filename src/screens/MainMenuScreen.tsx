@@ -1,6 +1,7 @@
 import type { User } from "@supabase/supabase-js";
 import {
   ImageBackground,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -19,7 +20,20 @@ import { TopBar } from "../components/TopBar";
 import { gameTheme } from "../theme/gameTheme";
 
 // Replace this require with the final generated main-menu background if you add a separate asset.
-const menuBackground = require("../../resources/cards-opti/table-1.png");
+const menuBackground = require("../../resources/backgrounds/menu-main.png");
+const menuIcons = {
+  createRoom: require("../../resources/menu/icons/create-room.png"),
+  customize: require("../../resources/menu/icons/customize.png"),
+  dailyReward: require("../../resources/menu/icons/daily-reward.png"),
+  joinRoom: require("../../resources/menu/icons/join-room.png"),
+  navFriends: require("../../resources/menu/icons/nav-friends.png"),
+  navHistory: require("../../resources/menu/icons/nav-history.png"),
+  navHome: require("../../resources/menu/icons/nav-home.png"),
+  navLeaderboard: require("../../resources/menu/icons/nav-leaderboard.png"),
+  playRandom: require("../../resources/menu/icons/play-random.png"),
+  rooms: require("../../resources/menu/icons/rooms.png"),
+  shop: require("../../resources/menu/icons/shop.png"),
+};
 
 type MatchmakingState = {
   etaSeconds?: number;
@@ -93,11 +107,13 @@ export function MainMenuScreen({
           style={styles.keyboardView}
         >
           <TopBar
+            coins={12540}
+            gems={1285}
             musicMuted={musicMuted}
             onOpenProfile={onOpenProfile}
             onOpenSettings={onOpenSettings}
             onToggleMusicMute={onToggleMusicMute}
-            tokens={120}
+            playerName={name}
           />
           <ScrollView
             contentContainerStyle={styles.content}
@@ -119,6 +135,7 @@ export function MainMenuScreen({
             <View style={styles.actions}>
               <MenuButton
                 disabled={!user}
+                iconSource={menuIcons.playRandom}
                 label={matchmaking.queued ? `Finding Match ${matchmaking.seconds ?? 0}s` : "Play Random"}
                 onPress={matchmaking.queued ? onCancelMatchmaking : onPlayRandom}
                 subtitle={user ? "Ranked matchmaking" : "Sign in to unlock"}
@@ -126,37 +143,54 @@ export function MainMenuScreen({
               {matchmaking.queued ? <Text style={styles.notice}>{queueText}</Text> : null}
               <MenuButton
                 disabled={roomButtonsDisabled}
-                label="Create Room"
+                iconSource={menuIcons.rooms}
+                label="Rooms"
                 onPress={onCreateRoom}
-                subtitle="Invite friends with a code"
+                subtitle="Play with Friends"
                 variant="secondary"
               />
               <View style={styles.smallGrid}>
                 <MenuButton
                   disabled={roomButtonsDisabled}
+                  iconSource={menuIcons.createRoom}
+                  label="Create"
+                  onPress={onCreateRoom}
+                  size="small"
+                  variant="secondary"
+                />
+                <MenuButton
+                  disabled={roomButtonsDisabled}
+                  iconSource={menuIcons.joinRoom}
                   label="Join Room"
                   onPress={onJoinRoom}
                   size="small"
                   variant="secondary"
                 />
-                <MenuButton label="Shop" onPress={onShop} size="small" variant="secondary" />
               </View>
-              <MenuButton label="Profile" onPress={onOpenProfile} size="small" variant="secondary" />
+              <View style={styles.smallGrid}>
+                <MenuButton disabled iconSource={menuIcons.customize} label="Customize" onPress={() => undefined} size="small" variant="secondary" />
+                <MenuButton iconSource={menuIcons.shop} label="Shop" onPress={onShop} size="small" variant="secondary" />
+              </View>
             </View>
 
             {disabledText ? <Text style={styles.notice}>{disabledText}</Text> : null}
 
-            <View style={styles.footer}>
-              <Pressable style={styles.footerButton}>
-                <Text style={styles.footerText}>How to Play</Text>
-              </Pressable>
-              <Pressable style={styles.footerButton}>
-                <Text style={styles.footerText}>No Ads</Text>
+            <View style={styles.rewardStrip}>
+              <View style={styles.rewardIcon}>
+                <Image source={menuIcons.dailyReward} resizeMode="contain" style={styles.rewardIconImage} />
+              </View>
+              <View style={styles.rewardCopy}>
+                <Text style={styles.rewardTitle}>Daily Reward</Text>
+                <Text style={styles.rewardText}>Come back every day!</Text>
+              </View>
+              <Pressable style={styles.claimButton}>
+                <Text style={styles.claimText}>Claim</Text>
               </Pressable>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      <BottomNav />
       <ProfileModal
         authBusy={authBusy}
         authEmail={authEmail}
@@ -244,6 +278,28 @@ function ProfileModal({
   );
 }
 
+function BottomNav() {
+  return (
+    <View style={styles.bottomNav}>
+      <NavItem label="Leaderboard" iconSource={menuIcons.navLeaderboard} disabled />
+      <NavItem label="Friends" iconSource={menuIcons.navFriends} disabled />
+      <NavItem label="Home" iconSource={menuIcons.navHome} active />
+      <NavItem label="History" iconSource={menuIcons.navHistory} disabled />
+    </View>
+  );
+}
+
+function NavItem({ active = false, disabled = false, iconSource, label }: { active?: boolean; disabled?: boolean; iconSource: number; label: string }) {
+  return (
+    <Pressable disabled={disabled} style={[styles.navItem, active ? styles.navItemActive : null, disabled ? styles.navItemDisabled : null]}>
+      <View style={[styles.navIconPlate, active ? styles.navIconPlateActive : null]}>
+        <Image source={iconSource} resizeMode="contain" style={styles.navIcon} />
+      </View>
+      <Text style={styles.navLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   actions: {
     gap: 12,
@@ -256,32 +312,16 @@ const styles = StyleSheet.create({
   content: {
     alignItems: "center",
     flexGrow: 1,
-    gap: 20,
+    gap: 16,
     justifyContent: "center",
-    paddingBottom: 28,
-    paddingHorizontal: 22,
-    paddingTop: 28,
-  },
-  footer: {
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "center",
-  },
-  footerButton: {
-    borderBottomColor: "rgba(243, 213, 138, 0.42)",
-    borderBottomWidth: 1,
-    paddingHorizontal: 4,
-    paddingVertical: 3,
-  },
-  footerText: {
-    color: "rgba(255, 244, 214, 0.78)",
-    fontSize: 13,
-    fontWeight: "800",
+    paddingBottom: 96,
+    paddingHorizontal: 14,
+    paddingTop: 20,
   },
   keyboardView: {
     flex: 1,
     paddingHorizontal: 14,
-    paddingTop: 8,
+    paddingTop: Platform.OS === "android" ? 34 : 26,
   },
   modalActions: {
     flexDirection: "row",
@@ -343,10 +383,109 @@ const styles = StyleSheet.create({
   },
   shade: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.32)",
+    backgroundColor: "rgba(0,0,0,0.26)",
   },
   smallGrid: {
     flexDirection: "row",
     gap: 12,
+  },
+  bottomNav: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.9)",
+    borderColor: "rgba(216, 168, 79, 0.38)",
+    borderTopWidth: 1,
+    bottom: 0,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    left: 0,
+    paddingBottom: Platform.OS === "android" ? 16 : 20,
+    paddingTop: 10,
+    position: "absolute",
+    right: 0,
+  },
+  claimButton: {
+    backgroundColor: "rgba(111, 59, 181, 0.86)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  claimText: {
+    color: gameTheme.colors.cream,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  navIcon: {
+    height: 22,
+    width: 22,
+  },
+  navIconPlate: {
+    alignItems: "center",
+    borderColor: "rgba(243, 213, 138, 0.32)",
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 34,
+    justifyContent: "center",
+    width: 34,
+  },
+  navIconPlateActive: {
+    backgroundColor: "rgba(216, 168, 79, 0.22)",
+    borderColor: gameTheme.colors.goldLight,
+  },
+  navItem: {
+    alignItems: "center",
+    gap: 3,
+    minWidth: 70,
+  },
+  navItemActive: {
+    opacity: 1,
+  },
+  navItemDisabled: {
+    opacity: 0.44,
+  },
+  navLabel: {
+    color: gameTheme.colors.cream,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  rewardCopy: {
+    flex: 1,
+  },
+  rewardIcon: {
+    alignItems: "center",
+    backgroundColor: "rgba(216, 168, 79, 0.2)",
+    borderColor: "rgba(243, 213, 138, 0.55)",
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 48,
+    justifyContent: "center",
+    width: 64,
+  },
+  rewardIconImage: {
+    height: 42,
+    width: 54,
+  },
+  rewardStrip: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.66)",
+    borderColor: "rgba(243, 213, 138, 0.46)",
+    borderRadius: 22,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    maxWidth: 390,
+    padding: 12,
+    width: "100%",
+  },
+  rewardText: {
+    color: "rgba(255, 244, 214, 0.72)",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  rewardTitle: {
+    color: gameTheme.colors.cream,
+    fontSize: 16,
+    fontWeight: "900",
   },
 });

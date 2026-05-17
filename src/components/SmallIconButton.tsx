@@ -1,13 +1,17 @@
-import { Pressable, StyleSheet, Text } from "react-native";
+import type { ImageSourcePropType } from "react-native";
+import { Image, Pressable, StyleSheet, Text } from "react-native";
 import { gameTheme } from "../theme/gameTheme";
 
 type SmallIconButtonProps = {
   disabled?: boolean;
+  iconSource?: ImageSourcePropType;
   label: string;
   onPress: () => void;
+  round?: boolean;
+  size?: "normal" | "large";
 };
 
-export function SmallIconButton({ disabled = false, label, onPress }: SmallIconButtonProps) {
+export function SmallIconButton({ disabled = false, iconSource, label, onPress, round = false, size = "normal" }: SmallIconButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -15,11 +19,17 @@ export function SmallIconButton({ disabled = false, label, onPress }: SmallIconB
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        round ? styles.round : null,
+        size === "large" ? styles.large : null,
         disabled ? styles.disabled : null,
         pressed && !disabled ? styles.pressed : null,
       ]}
     >
-      <Text style={styles.label}>{label}</Text>
+      {iconSource ? (
+        <Image source={iconSource} resizeMode="contain" style={[styles.icon, size === "large" ? styles.largeIcon : null]} />
+      ) : (
+        <Text style={styles.label}>{label}</Text>
+      )}
     </Pressable>
   );
 }
@@ -45,7 +55,23 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0,
   },
+  icon: {
+    height: 24,
+    width: 24,
+  },
+  largeIcon: {
+    height: 42,
+    width: 42,
+  },
   pressed: {
     transform: [{ scale: 0.96 }],
+  },
+  large: {
+    borderRadius: 34,
+    height: 68,
+    width: 68,
+  },
+  round: {
+    borderRadius: 24,
   },
 });
