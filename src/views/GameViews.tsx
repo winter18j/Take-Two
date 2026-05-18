@@ -140,7 +140,9 @@ export function RoomScreen({
             </View>
             <View style={[styles.statusDot, connected ? styles.onlineDot : null]} />
           </View>
-          <MenuButton label="Main Menu" onPress={onBack} size="small" variant="secondary" />
+          <Pressable onPress={onBack} style={styles.roomBackButton}>
+            <Text style={styles.roomBackButtonText}>‹</Text>
+          </Pressable>
 
           {appMode === "connect" ? (
             <View style={styles.roomPanel}>
@@ -312,6 +314,8 @@ export function GameTable({
   onRetry,
   adDue,
   onAdClosed,
+  onAdReward,
+  onShowInterstitialAd,
   onSevenSuit,
   pendingForYou,
   pendingSevenCard,
@@ -473,6 +477,8 @@ export function GameTable({
           adDue={adDue}
           game={game}
           onAdClosed={onAdClosed}
+          onAdReward={onAdReward}
+          onShowInterstitialAd={onShowInterstitialAd}
           onRetry={onRetry}
           playerId={playerId}
         />
@@ -706,12 +712,16 @@ function EndGameOverlay({
   adDue,
   game,
   onAdClosed,
+  onAdReward,
+  onShowInterstitialAd,
   onRetry,
   playerId,
 }: {
   adDue: boolean;
   game: ClientGameState;
   onAdClosed: () => void;
+  onAdReward: (currency: "coins" | "gems") => void;
+  onShowInterstitialAd: () => void;
   onRetry: () => void;
   playerId: string;
 }) {
@@ -734,8 +744,12 @@ function EndGameOverlay({
       <View style={styles.endPanel}>
         {adDue ? (
           <View style={styles.adPlaceholder}>
-            <Text style={styles.adPlaceholderText}>Ad placeholder</Text>
-            <Button label="Close" onPress={onAdClosed} tone="secondary" />
+            <Text style={styles.adPlaceholderText}>Ad break</Text>
+            <Text style={styles.endResultText}>A full-screen ad may appear after the match.</Text>
+            <View style={styles.confirmActions}>
+              <Button label="Show Ad" onPress={onShowInterstitialAd} />
+              <Button label="Skip" onPress={onAdClosed} tone="secondary" />
+            </View>
           </View>
         ) : null}
         <Text style={styles.endTitle}>
@@ -2179,6 +2193,8 @@ type GameTableProps = {
   onDraw: () => void;
   onPlayCard: (card: Card, sourcePoint?: Point) => void;
   onAdClosed: () => void;
+  onAdReward: (currency: "coins" | "gems") => void;
+  onShowInterstitialAd: () => void;
   onQuit: () => void;
   onResolvePending: () => void;
   onRetry: () => void;
@@ -2276,6 +2292,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
+  },
+  roomBackButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.72)",
+    borderColor: "rgba(243, 213, 138, 0.5)",
+    borderRadius: 22,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: "center",
+    position: "absolute",
+    left: 0,
+    top: Platform.OS === "android" ? 34 : 26,
+    width: 44,
+    zIndex: 4,
+  },
+  roomBackButtonText: {
+    color: gameTheme.colors.cream,
+    fontSize: 34,
+    fontWeight: "900",
+    lineHeight: 38,
   },
   roomTitle: {
     color: gameTheme.colors.cream,

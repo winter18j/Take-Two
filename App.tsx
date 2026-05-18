@@ -52,6 +52,19 @@ const supabase = supabaseUrl && supabaseAnonKey
     },
   })
   : null;
+const devEmails = new Set(["walidsabhied@gmail.com", "houdasafi555@gmail.com"]);
+const devWallet = { coins: 999999, gems: 999999 };
+const rewardedAdUnitId = process.env.EXPO_PUBLIC_ADMOB_REWARDED_ID ?? "ca-app-pub-5859429926694208/7036413721";
+const matchEndInterstitialAdUnitId = process.env.EXPO_PUBLIC_ADMOB_MATCH_END_INTERSTITIAL_ID ?? "ca-app-pub-5859429926694208/6032426039";
+type Wallet = { coins: number; gems: number };
+type LeaderboardMetric = "coins" | "matches" | "wins";
+type LeaderboardPeriod = "all_time" | "day" | "month" | "year";
+type LeaderboardRow = {
+  display_name: string;
+  rank: number;
+  user_id: string;
+  value: number;
+};
 
 export default function App() {
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);
@@ -85,6 +98,11 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [matchmaking, setMatchmaking] = useState<{ queued: boolean; etaSeconds?: number; seconds?: number }>({ queued: false });
+  const [wallet, setWallet] = useState<Wallet>({ coins: 0, gems: 0 });
+  const [dailyRewardReady, setDailyRewardReady] = useState(false);
+  const [dailyRewardNextClaimAt, setDailyRewardNextClaimAt] = useState<string | null>(null);
+  const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
+  const [leaderboardBusy, setLeaderboardBusy] = useState(false);
 
   const visibleGameRef = useRef<ClientGameState | null>(null);
   const sessionRef = useRef<Session | null>(null);
@@ -103,6 +121,12 @@ export default function App() {
 
     void NavigationBar.setBehaviorAsync("overlay-swipe").catch(() => undefined);
     void NavigationBar.setVisibilityAsync("hidden").catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    void import("react-native-google-mobile-ads")
+      .then(({ default: mobileAds }) => mobileAds().initialize())
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -263,6 +287,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void loadEconomy();
+  }, [authUser?.id]);
+
+  useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {
         return;
@@ -285,6 +313,7 @@ export default function App() {
   }, []);
 
   const currentPlayer = visibleGame?.players.find((player) => player.id === visibleGame.currentPlayerId);
+  const isDevAccount = Boolean(authUser?.email && devEmails.has(authUser.email.toLowerCase()));
   const isYourTurn = Boolean(session && visibleGame?.currentPlayerId === session.playerId);
   const pendingForYou = Boolean(
     session && visibleGame?.pendingAction?.targetPlayerId === session.playerId,
@@ -490,6 +519,10 @@ export default function App() {
       setProfileOpen(true);
       return;
     }
+    if (!isDevAccount && wallet.coins < 25) {
+      setError("You need 25 coins to play random.");
+      return;
+    }
 
     setError("");
     setMatchmaking({ queued: true, seconds: 0 });
@@ -588,11 +621,221 @@ export default function App() {
     setAuthGateDone(true);
   }
 
+  async function loadEconomy() {
+    if (!supabase || !authUser) {
+      setWallet({ coins: 0, gems: 0 });
+      setDailyRewardReady(false);
+      setDailyRewardNextClaimAt(null);
+      return;
+    }
+
+    if (authUser.email && devEmails.has(authUser.email.toLowerCase())) {
+      setWallet(devWallet);
+      setDailyRewardReady(true);
+      setDailyRewardNextClaimAt(null);
+      return;
+    }
+
+    const [{ data: walletData }, { data: dailyData }] = await Promise.all([
+      supabase.from("wallets").select("coins,gems").eq("user_id", authUser.id).single(),
+      supabase.from("daily_rewards").select("next_claim_at").eq("user_id", authUser.id).maybeSingle(),
+    ]);
+
+    setWallet({
+      coins: walletData?.coins ?? 0,
+      gems: walletData?.gems ?? 0,
+    });
+    const nextClaim = dailyData?.next_claim_at ?? null;
+    setDailyRewardNextClaimAt(nextClaim);
+    setDailyRewardReady(!nextClaim || new Date(nextClaim).getTime() <= Date.now());
+  }
+
+  async function loadLeaderboard(metric: LeaderboardMetric, period: LeaderboardPeriod) {
+    if (!supabase) {
+      setLeaderboardRows([]);
+      setError("Supabase is not configured.");
+      return;
+    }
+
+    setLeaderboardBusy(true);
+    setError("");
+    const { data, error: leaderboardError } = await supabase.rpc("get_leaderboard", {
+      metric,
+      period,
+      limit_count: 50,
+    });
+    setLeaderboardBusy(false);
+    if (leaderboardError) {
+      setError(leaderboardError.message);
+      return;
+    }
+    setLeaderboardRows((data ?? []) as LeaderboardRow[]);
+  }
+
+  async function claimDailyReward() {
+    if (!supabase || !authUser) {
+      setError("Sign in to claim daily rewards.");
+      return;
+    }
+    if (isDevAccount) {
+      setError("Dev account has unlimited coins and gems.");
+      return;
+    }
+
+    setError("");
+    const { data, error: claimError } = await supabase.rpc("claim_daily_reward", {
+      user_uuid: authUser.id,
+    });
+    if (claimError) {
+      setError(claimError.message);
+      return;
+    }
+    const reward = Array.isArray(data) ? data[0] : data;
+    setWallet({ coins: reward?.coins ?? wallet.coins, gems: reward?.gems ?? wallet.gems });
+    setDailyRewardNextClaimAt(reward?.next_claim_at ?? null);
+    setDailyRewardReady(false);
+  }
+
+  async function grantAdReward(currency: "coins" | "gems") {
+    if (!supabase || !authUser) {
+      setError("Sign in to earn rewards.");
+      return;
+    }
+    if (isDevAccount) {
+      setError("Dev account has unlimited coins and gems.");
+      return;
+    }
+
+    const watched = await showRewardedAd();
+    if (!watched) {
+      setError("Watch the full rewarded ad to receive the reward.");
+      return;
+    }
+
+    const amount = currency === "coins" ? 50 : 10;
+    const rpc = currency === "coins" ? "add_coins" : "add_gems";
+    const { error: rewardError } = await supabase.rpc(rpc, {
+      user_uuid: authUser.id,
+      amount,
+      reason_text: "rewarded_ad",
+      metadata_json: {},
+    });
+    if (rewardError) {
+      setError(rewardError.message);
+      return;
+    }
+    await loadEconomy();
+    setError(`Reward added: ${amount} ${currency}.`);
+  }
+
+  async function grantAdPack(pack: { adsRequired: number; amount: number; currency: "coins" | "gems"; id: string }) {
+    if (!supabase || !authUser) {
+      setError("Sign in to earn rewards.");
+      return;
+    }
+    if (isDevAccount) {
+      setError("Dev account has unlimited coins and gems.");
+      return;
+    }
+
+    for (let adIndex = 0; adIndex < pack.adsRequired; adIndex += 1) {
+      setError(`Ad ${adIndex + 1}/${pack.adsRequired}`);
+      const watched = await showRewardedAd();
+      if (!watched) {
+        setError(`Pack cancelled at ad ${adIndex + 1}/${pack.adsRequired}.`);
+        return;
+      }
+    }
+
+    const rpc = pack.currency === "coins" ? "add_coins" : "add_gems";
+    const { error: rewardError } = await supabase.rpc(rpc, {
+      user_uuid: authUser.id,
+      amount: pack.amount,
+      reason_text: "rewarded_ad_pack",
+      metadata_json: {
+        ads_required: pack.adsRequired,
+        pack_id: pack.id,
+      },
+    });
+    if (rewardError) {
+      setError(rewardError.message);
+      return;
+    }
+    await loadEconomy();
+    setError(`Reward added: ${pack.amount} ${pack.currency}.`);
+  }
+
+  async function showRewardedAd() {
+    try {
+      const { AdEventType, RewardedAd, RewardedAdEventType } = await import("react-native-google-mobile-ads");
+      const rewarded = RewardedAd.createForAdRequest(rewardedAdUnitId, {
+        requestNonPersonalizedAdsOnly: true,
+      });
+
+      return await new Promise<boolean>((resolve) => {
+        let earnedReward = false;
+        const cleanups: Array<() => void> = [];
+        const finish = (value: boolean) => {
+          while (cleanups.length > 0) {
+            cleanups.pop()?.();
+          }
+          resolve(value);
+        };
+
+        cleanups.push(rewarded.addAdEventListener(RewardedAdEventType.LOADED, () => rewarded.show()));
+        cleanups.push(rewarded.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => {
+          earnedReward = true;
+        }));
+        cleanups.push(rewarded.addAdEventListener(AdEventType.CLOSED, () => finish(earnedReward)));
+        cleanups.push(rewarded.addAdEventListener(AdEventType.ERROR, () => finish(false)));
+
+        rewarded.load();
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  async function showMatchEndInterstitialAd() {
+    try {
+      const { AdEventType, InterstitialAd } = await import("react-native-google-mobile-ads");
+      const interstitial = InterstitialAd.createForAdRequest(matchEndInterstitialAdUnitId, {
+        requestNonPersonalizedAdsOnly: true,
+      });
+
+      const shown = await new Promise<boolean>((resolve) => {
+        const cleanups: Array<() => void> = [];
+        const finish = (value: boolean) => {
+          while (cleanups.length > 0) {
+            cleanups.pop()?.();
+          }
+          resolve(value);
+        };
+
+        cleanups.push(interstitial.addAdEventListener(AdEventType.LOADED, () => {
+          interstitial.show();
+          finish(true);
+        }));
+        cleanups.push(interstitial.addAdEventListener(AdEventType.ERROR, () => finish(false)));
+
+        interstitial.load();
+      });
+      setAdDue(false);
+      if (!shown) {
+        setError("Ad was not ready.");
+      }
+    } catch {
+      setAdDue(false);
+      setError("Ads are not available in this build yet.");
+    }
+  }
+
   async function signOut() {
     await supabase?.auth.signOut();
     setAuthEmail("");
     setAuthPassword("");
     setAuthGateDone(false);
+    setWallet({ coins: 0, gems: 0 });
   }
 
   function joinRoom() {
@@ -734,6 +977,8 @@ export default function App() {
           onRetry={retryRound}
           adDue={adDue}
           onAdClosed={() => setAdDue(false)}
+          onAdReward={grantAdReward}
+          onShowInterstitialAd={showMatchEndInterstitialAd}
         />
       ) : screen === "menu" ? (
         <MainMenuScreen
@@ -743,7 +988,15 @@ export default function App() {
           disabledText={error}
           musicMuted={musicMuted}
           matchmaking={matchmaking}
+          wallet={isDevAccount ? devWallet : wallet}
+          leaderboardBusy={leaderboardBusy}
+          leaderboardRows={leaderboardRows}
+          onLoadLeaderboard={loadLeaderboard}
+          dailyRewardReady={dailyRewardReady}
+          dailyRewardNextClaimAt={dailyRewardNextClaimAt}
+          isDevAccount={isDevAccount}
           onCancelMatchmaking={cancelMatchmaking}
+          onClaimDailyReward={claimDailyReward}
           onCreateRoom={openCreateRoom}
           onJoinRoom={openJoinRoom}
           onPlayRandom={playRandom}
@@ -760,7 +1013,8 @@ export default function App() {
           setAuthEmail={setAuthEmail}
           setAuthPassword={setAuthPassword}
           user={authUser}
-          onShop={() => setError("Shop coming soon.")}
+          onAdReward={grantAdReward}
+          onWatchAdPack={grantAdPack}
         />
       ) : (
         <RoomScreen

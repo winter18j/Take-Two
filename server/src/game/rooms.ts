@@ -411,6 +411,7 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
     rematchRequests: [],
     scores: {},
     message: "Waiting for players.",
+    isMatchmaking: false,
     timer: null,
   };
 
@@ -534,6 +535,7 @@ export function createMatchmakingRoom(
     players.push(addBotToRoom(room));
   }
 
+  room.isMatchmaking = true;
   startRound(io, room, { randomizePlayers: true });
   maybeRunBotTurn(io, room);
   return { room, players };

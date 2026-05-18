@@ -62,6 +62,7 @@ export type Room = {
   rematchRequests: string[];
   scores: Record<string, number>;
   message: string;
+  isMatchmaking?: boolean;
   timer: NodeJS.Timeout | null;
 };
 

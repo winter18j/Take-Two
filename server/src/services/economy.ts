@@ -1,16 +1,16 @@
-export const tokenProducts = [
-  { id: "tokens_10", tokens: 10, priceUsd: 0.99 },
-  { id: "tokens_20", tokens: 20, priceUsd: 1.59 },
-  { id: "tokens_30", tokens: 30, priceUsd: 1.99 },
-  { id: "tokens_50", tokens: 50, priceUsd: 2.99 },
-  { id: "tokens_75", tokens: 75, priceUsd: 3.99 },
-  { id: "tokens_100", tokens: 100, priceUsd: 4.99 },
+export const coinAdPacks = [
+  { id: "coins_500_ads", coins: 500, adsRequired: 3 },
+  { id: "coins_1200_ads", coins: 1200, adsRequired: 6 },
+  { id: "coins_3000_ads", coins: 3000, adsRequired: 12 },
+  { id: "coins_7500_ads", coins: 7500, adsRequired: 25 },
 ] as const;
 
-export const appEntitlements = {
-  removeAds: { id: "remove_ads", priceUsd: 0.99, bonusTokens: 3 },
-  premiumMonthly: { id: "premium_monthly", priceUsd: 5.99, unlimitedTokens: true, removesAds: true },
-} as const;
+export const gemAdPacks = [
+  { id: "gems_120_ads", gems: 120, adsRequired: 3 },
+  { id: "gems_300_ads", gems: 300, adsRequired: 7 },
+  { id: "gems_800_ads", gems: 800, adsRequired: 16 },
+  { id: "gems_2000_ads", gems: 2000, adsRequired: 35 },
+] as const;
 
 export function hiddenScore(wins: number, losses: number, games: number) {
   if (games <= 0) {

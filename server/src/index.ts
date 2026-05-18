@@ -37,6 +37,8 @@ const supabase = supabaseUrl.includes("supabase.co") && !supabaseUrl.includes("Y
   : null;
 const matchmakingQueue = new MatchmakingQueue();
 const persistedMatches = new Set<string>();
+const devEmails = new Set(["walidsabhied@gmail.com", "houdasafi555@gmail.com"]);
+const matchmakingEntryCost = 25;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cardsPath = path.resolve(__dirname, "../../resources/cards");
@@ -86,10 +88,84 @@ async function getMatchmakingProfile(accountId: string) {
   return data;
 }
 
-function tryStartMatchmakingRoom() {
+function isDevEmail(email: unknown) {
+  return typeof email === "string" && devEmails.has(email.toLowerCase());
+}
+
+async function hasEnoughCoins(accountId: string, email: unknown, amount: number) {
+  if (!supabase || isDevEmail(email)) {
+    return true;
+  }
+
+  const { data, error } = await supabase
+    .from("wallets")
+    .select("coins")
+    .eq("user_id", accountId)
+    .single();
+
+  if (error) {
+    throw new Error("Could not load wallet.");
+  }
+
+  return (data?.coins ?? 0) >= amount;
+}
+
+async function spendMatchmakingCoins(accountId: string, email: unknown) {
+  if (!supabase || isDevEmail(email)) {
+    return true;
+  }
+
+  const { data, error } = await supabase.rpc("spend_coins", {
+    user_uuid: accountId,
+    amount: matchmakingEntryCost,
+    reason_text: "random_matchmaking_entry",
+    metadata_json: {},
+  });
+
+  if (error) {
+    throw new Error("Could not spend matchmaking coins.");
+  }
+
+  return Boolean(data);
+}
+
+async function awardCoins(accountId: string, email: unknown, amount: number, reason: string) {
+  if (!supabase || isDevEmail(email) || amount <= 0) {
+    return;
+  }
+
+  await supabase.rpc("add_coins", {
+    user_uuid: accountId,
+    amount,
+    reason_text: reason,
+    metadata_json: {},
+  });
+}
+
+function rewardForPlacement(playerCount: number, placement: number) {
+  const rewards: Record<number, number[]> = {
+    2: [40, 0],
+    3: [45, 20, 10],
+    4: [55, 30, 15, 0],
+  };
+
+  return rewards[playerCount]?.[placement] ?? 0;
+}
+
+async function tryStartMatchmakingRoom() {
   const match = matchmakingQueue.findMatch();
   if (!match) {
     return;
+  }
+
+  for (const entry of match.entries) {
+    const socket = io.sockets.sockets.get(entry.socketId);
+    const ok = await spendMatchmakingCoins(entry.accountId, socket?.data.email);
+    if (!ok) {
+      io.to(entry.socketId).emit("matchmakingStatus", { queued: false });
+      io.to(entry.socketId).emit("errorMessage", "You need 25 coins to play random.");
+      return;
+    }
   }
 
   const { room, players } = createMatchmakingRoom(io, match.entries, match.botCount);
@@ -103,7 +179,7 @@ function tryStartMatchmakingRoom() {
 }
 
 setInterval(() => {
-  tryStartMatchmakingRoom();
+  void tryStartMatchmakingRoom();
 }, 1000).unref?.();
 
 async function persistFinishedMatch(roomId: string) {
@@ -130,6 +206,7 @@ async function persistFinishedMatch(roomId: string) {
     finished_at: new Date().toISOString(),
   });
 
+  const humanPlayerCount = ranked.length;
   for (const player of ranked) {
     if (!player?.accountId) {
       continue;
@@ -142,6 +219,14 @@ async function persistFinishedMatch(roomId: string) {
       did_win: player.id === room.winnerId,
       did_lose: player.id === room.loserId,
     });
+    if (room.isMatchmaking) {
+      await awardCoins(
+        player.accountId,
+        player.socketId ? io.sockets.sockets.get(player.socketId)?.data.email : null,
+        rewardForPlacement(humanPlayerCount, placement),
+        "random_match_reward",
+      );
+    }
   }
 }
 
@@ -190,6 +275,9 @@ io.on("connection", (socket) => {
       if (profile.random_banned_until && new Date(profile.random_banned_until).getTime() > Date.now()) {
         throw new Error("Random play is temporarily locked because of recent quits.");
       }
+      if (!(await hasEnoughCoins(accountId, socket.data.email, matchmakingEntryCost))) {
+        throw new Error("You need 25 coins to play random.");
+      }
 
       matchmakingQueue.add({
         accountId,
@@ -203,7 +291,7 @@ io.on("connection", (socket) => {
         ...status,
         etaSeconds: matchmakingQueue.size() >= 4 ? 2 : 10,
       });
-      tryStartMatchmakingRoom();
+      void tryStartMatchmakingRoom();
     } catch (error) {
       handleSocketError(socket.id, error);
     }

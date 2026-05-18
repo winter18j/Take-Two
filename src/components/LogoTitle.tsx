@@ -9,16 +9,12 @@ type LogoTitleProps = {
 };
 
 export function LogoTitle({ subtitle = "Moroccan Card Battle", title = "Take Two" }: LogoTitleProps) {
+  void subtitle;
+  void title;
   return (
     <View style={styles.wrap}>
       <View style={styles.logoPlaceholder}>
         <Image source={logoImage} resizeMode="contain" style={styles.logoImage} />
-      </View>
-      <Text style={styles.title}>{title}</Text>
-      <View style={styles.subtitleRow}>
-        <View style={styles.rule} />
-        <Text style={styles.subtitle}>{subtitle}</Text>
-        <View style={styles.rule} />
       </View>
     </View>
   );
