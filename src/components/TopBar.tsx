@@ -35,7 +35,6 @@ export function TopBar({
         <SmallIconButton iconSource={topBarIcons.profile} label="Profile" onPress={onOpenProfile} round size="large" />
         <View style={styles.profileTextBlock}>
           <Text numberOfLines={1} style={styles.playerName}>{playerName || "PlayerOne"}</Text>
-          <Text style={styles.playerRank}>Crown Master</Text>
         </View>
       </View>
       <View style={styles.walletAndControls}>
@@ -67,11 +66,6 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0,0,0,0.55)",
     textShadowOffset: { height: 1, width: 0 },
     textShadowRadius: 4,
-  },
-  playerRank: {
-    color: gameTheme.colors.goldLight,
-    fontSize: 12,
-    fontWeight: "800",
   },
   profileCluster: {
     alignItems: "center",

@@ -85,5 +85,6 @@ export type ClientGameState = {
   rematchRequests: string[];
   scores: Record<string, number>;
   message: string;
+  isMatchmaking: boolean;
   youAreHost: boolean;
 };

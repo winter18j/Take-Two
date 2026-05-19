@@ -92,6 +92,7 @@ function toClientState(room: Room, player: Player): ClientGameState {
     rematchRequests: room.rematchRequests,
     scores: room.scores,
     message: room.message,
+    isMatchmaking: Boolean(room.isMatchmaking),
     youAreHost: player.isHost,
   };
 }

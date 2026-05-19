@@ -23,6 +23,12 @@ import { CardImageEngine } from "./rendering/CardImageEngine";
 
 export const RESPONSE_WINDOW_SECONDS = 10;
 export const TURN_WINDOW_SECONDS = 15;
+const MATCH_ENTRY_COST = 25;
+const MATCH_REWARD_TABLE: Record<number, number[]> = {
+  2: [40, 0],
+  3: [45, 20, 10],
+  4: [55, 30, 15, 0],
+};
 const CARD_WIDTH = 92;
 const CARD_HEIGHT = 138;
 const HAND_ROW_LIMIT = 5;
@@ -315,6 +321,8 @@ export function GameTable({
   adDue,
   onAdClosed,
   onAdReward,
+  onConfirmWinnings,
+  onMainMenu,
   onShowInterstitialAd,
   onSevenSuit,
   pendingForYou,
@@ -478,6 +486,8 @@ export function GameTable({
           game={game}
           onAdClosed={onAdClosed}
           onAdReward={onAdReward}
+          onConfirmWinnings={onConfirmWinnings}
+          onMainMenu={onMainMenu}
           onShowInterstitialAd={onShowInterstitialAd}
           onRetry={onRetry}
           playerId={playerId}
@@ -713,6 +723,8 @@ function EndGameOverlay({
   game,
   onAdClosed,
   onAdReward,
+  onConfirmWinnings,
+  onMainMenu,
   onShowInterstitialAd,
   onRetry,
   playerId,
@@ -721,6 +733,8 @@ function EndGameOverlay({
   game: ClientGameState;
   onAdClosed: () => void;
   onAdReward: (currency: "coins" | "gems") => void;
+  onConfirmWinnings: () => void;
+  onMainMenu: () => void;
   onShowInterstitialAd: () => void;
   onRetry: () => void;
   playerId: string;
@@ -735,6 +749,11 @@ function EndGameOverlay({
   const loser = game.players.find((player) => player.id === game.loserId);
   const requester = game.players.find((player) => game.rematchRequests.includes(player.id) && player.id !== playerId);
   const youRequested = game.rematchRequests.includes(playerId);
+  const yourPlacement = game.roundResults.indexOf(playerId);
+  const expectedReward =
+    game.isMatchmaking && yourPlacement >= 0
+      ? MATCH_REWARD_TABLE[game.players.length]?.[yourPlacement] ?? 0
+      : 0;
   const orderedResults = game.roundResults
     .map((id) => game.players.find((player) => player.id === id))
     .filter((player): player is Player => Boolean(player));
@@ -761,6 +780,16 @@ function EndGameOverlay({
             {player.id === playerId ? " (You)" : ""}
           </Text>
         ))}
+        {game.isMatchmaking ? (
+          <View style={styles.scoreBlock}>
+            <Text style={styles.endResultText}>Entry: -{MATCH_ENTRY_COST} coins</Text>
+            <Text style={styles.endResultText}>
+              {expectedReward > 0
+                ? `Winnings confirmed: +${expectedReward} coins`
+                : "No coin prize for this placement."}
+            </Text>
+          </View>
+        ) : null}
         {isOneVsOne ? (
           <View style={styles.scoreBlock}>
             {game.players.map((player) => (
@@ -777,6 +806,10 @@ function EndGameOverlay({
             <RetryButton disabled={!retryEnabled || youRequested} onRetry={onRetry} />
           </View>
         ) : null}
+        <View style={styles.confirmActions}>
+          <Button label="Confirm Winnings" onPress={onConfirmWinnings} tone="secondary" />
+          <Button label="Main Menu" onPress={onMainMenu} />
+        </View>
       </View>
     </View>
   );
@@ -2105,6 +2138,7 @@ export type ClientGameState = {
   rematchRequests: string[];
   scores: Record<string, number>;
   message: string;
+  isMatchmaking: boolean;
   youAreHost: boolean;
 };
 
@@ -2194,6 +2228,8 @@ type GameTableProps = {
   onPlayCard: (card: Card, sourcePoint?: Point) => void;
   onAdClosed: () => void;
   onAdReward: (currency: "coins" | "gems") => void;
+  onConfirmWinnings: () => void;
+  onMainMenu: () => void;
   onShowInterstitialAd: () => void;
   onQuit: () => void;
   onResolvePending: () => void;

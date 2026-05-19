@@ -56,6 +56,7 @@ const devEmails = new Set(["walidsabhied@gmail.com", "houdasafi555@gmail.com"]);
 const devWallet = { coins: 999999, gems: 999999 };
 const rewardedAdUnitId = process.env.EXPO_PUBLIC_ADMOB_REWARDED_ID ?? "ca-app-pub-5859429926694208/7036413721";
 const matchEndInterstitialAdUnitId = process.env.EXPO_PUBLIC_ADMOB_MATCH_END_INTERSTITIAL_ID ?? "ca-app-pub-5859429926694208/6032426039";
+const useAdMobTestIds = process.env.EXPO_PUBLIC_USE_ADMOB_TEST_IDS === "true";
 type Wallet = { coins: number; gems: number };
 type LeaderboardMetric = "coins" | "matches" | "wins";
 type LeaderboardPeriod = "all_time" | "day" | "month" | "year";
@@ -233,6 +234,9 @@ export default function App() {
     if (visibleGame?.status === "finished") {
       setConfettiRun((run) => run + 1);
       playSoundPlaceholder(visibleGame.loserId === session?.playerId ? "lose" : "gameEnd");
+      setTimeout(() => {
+        void loadEconomy();
+      }, 1800);
       if (Date.now() - lastAdShownAt >= 5 * 60 * 1000) {
         setAdDue(true);
         setLastAdShownAt(Date.now());
@@ -700,9 +704,9 @@ export default function App() {
       return;
     }
 
-    const watched = await showRewardedAd();
-    if (!watched) {
-      setError("Watch the full rewarded ad to receive the reward.");
+    const adResult = await showRewardedAd();
+    if (!adResult.ok) {
+      setError(adResult.error ?? "Watch the full rewarded ad to receive the reward.");
       return;
     }
 
@@ -734,9 +738,9 @@ export default function App() {
 
     for (let adIndex = 0; adIndex < pack.adsRequired; adIndex += 1) {
       setError(`Ad ${adIndex + 1}/${pack.adsRequired}`);
-      const watched = await showRewardedAd();
-      if (!watched) {
-        setError(`Pack cancelled at ad ${adIndex + 1}/${pack.adsRequired}.`);
+      const adResult = await showRewardedAd();
+      if (!adResult.ok) {
+        setError(adResult.error ?? `Pack cancelled at ad ${adIndex + 1}/${pack.adsRequired}.`);
         return;
       }
     }
@@ -761,16 +765,18 @@ export default function App() {
 
   async function showRewardedAd() {
     try {
-      const { AdEventType, RewardedAd, RewardedAdEventType, default: mobileAds } = await import("react-native-google-mobile-ads");
+      const { AdEventType, RewardedAd, RewardedAdEventType, TestIds, default: mobileAds } = await import("react-native-google-mobile-ads");
       await mobileAds().initialize();
-      const rewarded = RewardedAd.createForAdRequest(rewardedAdUnitId, {
+      const rewarded = RewardedAd.createForAdRequest(useAdMobTestIds ? TestIds.REWARDED : rewardedAdUnitId, {
         requestNonPersonalizedAdsOnly: true,
       });
 
-      return await new Promise<boolean>((resolve) => {
+      return await new Promise<{ error?: string; ok: boolean }>((resolve) => {
         let earnedReward = false;
         const cleanups: Array<() => void> = [];
-        const finish = (value: boolean) => {
+        const timeout = setTimeout(() => finish({ error: "Ad timed out. Try again.", ok: false }), 20_000);
+        const finish = (value: { error?: string; ok: boolean }) => {
+          clearTimeout(timeout);
           while (cleanups.length > 0) {
             cleanups.pop()?.();
           }
@@ -781,21 +787,30 @@ export default function App() {
         cleanups.push(rewarded.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => {
           earnedReward = true;
         }));
-        cleanups.push(rewarded.addAdEventListener(AdEventType.CLOSED, () => finish(earnedReward)));
-        cleanups.push(rewarded.addAdEventListener(AdEventType.ERROR, () => finish(false)));
+        cleanups.push(rewarded.addAdEventListener(AdEventType.CLOSED, () => finish({
+          error: earnedReward ? undefined : "The ad closed before the reward was earned.",
+          ok: earnedReward,
+        })));
+        cleanups.push(rewarded.addAdEventListener(AdEventType.ERROR, (error) => finish({
+          error: error.message || "Rewarded ad was not ready. Try again in a moment.",
+          ok: false,
+        })));
 
         rewarded.load();
       });
-    } catch {
-      return false;
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : "Rewarded ads are not available in this build.",
+        ok: false,
+      };
     }
   }
 
   async function showMatchEndInterstitialAd() {
     try {
-      const { AdEventType, InterstitialAd, default: mobileAds } = await import("react-native-google-mobile-ads");
+      const { AdEventType, InterstitialAd, TestIds, default: mobileAds } = await import("react-native-google-mobile-ads");
       await mobileAds().initialize();
-      const interstitial = InterstitialAd.createForAdRequest(matchEndInterstitialAdUnitId, {
+      const interstitial = InterstitialAd.createForAdRequest(useAdMobTestIds ? TestIds.INTERSTITIAL : matchEndInterstitialAdUnitId, {
         requestNonPersonalizedAdsOnly: true,
       });
 
@@ -975,6 +990,8 @@ export default function App() {
           onAdClosed={() => setAdDue(false)}
           onAdReward={grantAdReward}
           onShowInterstitialAd={showMatchEndInterstitialAd}
+          onConfirmWinnings={loadEconomy}
+          onMainMenu={cleanupToMenu}
         />
       ) : screen === "menu" ? (
         <MainMenuScreen

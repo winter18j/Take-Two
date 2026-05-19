@@ -206,7 +206,6 @@ async function persistFinishedMatch(roomId: string) {
     finished_at: new Date().toISOString(),
   });
 
-  const humanPlayerCount = ranked.length;
   for (const player of ranked) {
     if (!player?.accountId) {
       continue;
@@ -223,7 +222,7 @@ async function persistFinishedMatch(roomId: string) {
       await awardCoins(
         player.accountId,
         player.socketId ? io.sockets.sockets.get(player.socketId)?.data.email : null,
-        rewardForPlacement(humanPlayerCount, placement),
+        rewardForPlacement(room.players.length, placement),
         "random_match_reward",
       );
     }
