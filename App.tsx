@@ -124,12 +124,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void import("react-native-google-mobile-ads")
-      .then(({ default: mobileAds }) => mobileAds().initialize())
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -767,7 +761,8 @@ export default function App() {
 
   async function showRewardedAd() {
     try {
-      const { AdEventType, RewardedAd, RewardedAdEventType } = await import("react-native-google-mobile-ads");
+      const { AdEventType, RewardedAd, RewardedAdEventType, default: mobileAds } = await import("react-native-google-mobile-ads");
+      await mobileAds().initialize();
       const rewarded = RewardedAd.createForAdRequest(rewardedAdUnitId, {
         requestNonPersonalizedAdsOnly: true,
       });
@@ -798,7 +793,8 @@ export default function App() {
 
   async function showMatchEndInterstitialAd() {
     try {
-      const { AdEventType, InterstitialAd } = await import("react-native-google-mobile-ads");
+      const { AdEventType, InterstitialAd, default: mobileAds } = await import("react-native-google-mobile-ads");
+      await mobileAds().initialize();
       const interstitial = InterstitialAd.createForAdRequest(matchEndInterstitialAdUnitId, {
         requestNonPersonalizedAdsOnly: true,
       });
