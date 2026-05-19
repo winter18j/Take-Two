@@ -38,9 +38,21 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  requested_username text;
 begin
-  insert into public.profiles (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data->>'display_name', 'Player'))
+  requested_username := coalesce(
+    new.raw_user_meta_data->>'username',
+    new.raw_user_meta_data->>'display_name',
+    split_part(new.email, '@', 1)
+  );
+
+  insert into public.profiles (id, display_name, username)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'display_name', requested_username, 'Player'),
+    public.generate_unique_username(requested_username)
+  )
   on conflict (id) do nothing;
 
   insert into public.wallets (user_id, coins, gems, tokens)

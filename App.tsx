@@ -67,6 +67,14 @@ type LeaderboardRow = {
   value: number;
 };
 
+function normalizeUsername(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 24);
+}
+
+function isValidUsername(value: string) {
+  return /^[a-z0-9_]{3,24}$/.test(value);
+}
+
 export default function App() {
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);
   const [name, setNameState] = useState("Player");
@@ -286,6 +294,7 @@ export default function App() {
 
   useEffect(() => {
     void loadEconomy();
+    void loadProfileName();
   }, [authUser?.id]);
 
   useEffect(() => {
@@ -600,14 +609,35 @@ export default function App() {
       return;
     }
 
+    const username = normalizeUsername(name.trim());
+    if (!isValidUsername(username)) {
+      setError("Choose a pseudo with 3-24 letters, numbers, or underscores.");
+      return;
+    }
+
     setAuthBusy(true);
     setError("");
+    const { data: usernameAvailable, error: usernameError } = await supabase.rpc("is_username_available", {
+      requested_username: username,
+    });
+    if (usernameError) {
+      setAuthBusy(false);
+      setError(usernameError.message);
+      return;
+    }
+    if (!usernameAvailable) {
+      setAuthBusy(false);
+      setError("This pseudo is already taken.");
+      return;
+    }
+
     const { error: signUpError } = await supabase.auth.signUp({
       email: authEmail.trim(),
       password: authPassword,
       options: {
         data: {
-          display_name: name,
+          display_name: username,
+          username,
         },
       },
     });
@@ -617,6 +647,22 @@ export default function App() {
       return;
     }
     setAuthGateDone(true);
+  }
+
+  async function loadProfileName() {
+    if (!supabase || !authUser) {
+      return;
+    }
+
+    const { data } = await supabase
+      .from("profiles")
+      .select("username,display_name")
+      .eq("id", authUser.id)
+      .maybeSingle();
+    const profileName = data?.username ?? data?.display_name;
+    if (profileName?.trim()) {
+      setName(profileName.trim());
+    }
   }
 
   async function loadEconomy() {
