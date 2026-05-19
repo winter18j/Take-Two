@@ -275,13 +275,21 @@ function ProfileModal({
         <View style={styles.profilePanel}>
           <Text style={styles.profileTitle}>Profile</Text>
           <Text style={styles.profileText}>{user?.email ? user.email : "Playing as guest"}</Text>
-          <TextInput
-            onChangeText={setName}
-            placeholder="Player name"
-            placeholderTextColor="rgba(255, 244, 214, 0.52)"
-            style={styles.profileInput}
-            value={name}
-          />
+          {user ? (
+            <View style={styles.lockedPseudoBox}>
+              <Text style={styles.lockedPseudoLabel}>Pseudo</Text>
+              <Text numberOfLines={1} style={styles.lockedPseudoValue}>{name}</Text>
+            </View>
+          ) : (
+            <TextInput
+              autoCapitalize="none"
+              onChangeText={setName}
+              placeholder="Choose pseudo"
+              placeholderTextColor="rgba(255, 244, 214, 0.52)"
+              style={styles.profileInput}
+              value={name}
+            />
+          )}
           {!user ? (
             <>
               <TextInput
@@ -648,6 +656,27 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     minWidth: 54,
     textAlign: "right",
+  },
+  lockedPseudoBox: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(243, 213, 138, 0.32)",
+    borderRadius: gameTheme.radius.md,
+    borderWidth: 1,
+    gap: 3,
+    minHeight: 56,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  lockedPseudoLabel: {
+    color: "rgba(255, 244, 214, 0.58)",
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  lockedPseudoValue: {
+    color: gameTheme.colors.cream,
+    fontSize: 17,
+    fontWeight: "900",
   },
   modalActions: {
     flexDirection: "row",

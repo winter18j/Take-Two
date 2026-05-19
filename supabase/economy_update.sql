@@ -211,13 +211,13 @@ begin
   if metric = 'coins' then
     return query
       select
-        row_number() over (order by w.coins desc, p.display_name asc)::integer as rank,
+        row_number() over (order by w.coins desc, p.username asc)::integer as rank,
         p.id as user_id,
-        p.display_name,
+        p.username as display_name,
         w.coins as value
       from public.wallets w
       join public.profiles p on p.id = w.user_id
-      order by w.coins desc, p.display_name asc
+      order by w.coins desc, p.username asc
       limit least(greatest(limit_count, 1), 100);
     return;
   end if;
@@ -225,16 +225,16 @@ begin
   if metric = 'wins' then
     return query
       select
-        row_number() over (order by count(*) desc, p.display_name asc)::integer as rank,
+        row_number() over (order by count(*) desc, p.username asc)::integer as rank,
         p.id as user_id,
-        p.display_name,
+        p.username as display_name,
         count(*)::integer as value
       from public.matches m
       join public.profiles p on p.id = m.winner_id
       where m.winner_id is not null
         and (from_time is null or coalesce(m.finished_at, m.created_at) >= from_time)
-      group by p.id, p.display_name
-      order by count(*) desc, p.display_name asc
+      group by p.id, p.username
+      order by count(*) desc, p.username asc
       limit least(greatest(limit_count, 1), 100);
     return;
   end if;
@@ -250,14 +250,14 @@ begin
           and (from_time is null or coalesce(m.finished_at, m.created_at) >= from_time)
       )
       select
-        row_number() over (order by count(*) desc, p.display_name asc)::integer as rank,
+        row_number() over (order by count(*) desc, p.username asc)::integer as rank,
         p.id as user_id,
-        p.display_name,
+        p.username as display_name,
         count(*)::integer as value
       from match_players mp
       join public.profiles p on p.id = mp.account_id
-      group by p.id, p.display_name
-      order by count(*) desc, p.display_name asc
+      group by p.id, p.username
+      order by count(*) desc, p.username asc
       limit least(greatest(limit_count, 1), 100);
     return;
   end if;

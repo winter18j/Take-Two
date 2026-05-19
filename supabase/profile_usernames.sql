@@ -94,6 +94,103 @@ as $$
     );
 $$;
 
+create or replace function public.prevent_username_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  if old.username is distinct from new.username then
+    raise exception 'Username cannot be changed after account creation.';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists prevent_username_change on public.profiles;
+create trigger prevent_username_change
+before update on public.profiles
+for each row execute function public.prevent_username_change();
+
+create or replace function public.get_leaderboard(metric text, period text default 'all_time', limit_count integer default 50)
+returns table (
+  rank integer,
+  user_id uuid,
+  display_name text,
+  value integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  from_time timestamptz;
+begin
+  from_time := case period
+    when 'day' then now() - interval '1 day'
+    when 'month' then now() - interval '1 month'
+    when 'year' then now() - interval '1 year'
+    else null
+  end;
+
+  if metric = 'coins' then
+    return query
+      select
+        row_number() over (order by w.coins desc, p.username asc)::integer as rank,
+        p.id as user_id,
+        p.username as display_name,
+        w.coins as value
+      from public.wallets w
+      join public.profiles p on p.id = w.user_id
+      order by w.coins desc, p.username asc
+      limit least(greatest(limit_count, 1), 100);
+    return;
+  end if;
+
+  if metric = 'wins' then
+    return query
+      select
+        row_number() over (order by count(*) desc, p.username asc)::integer as rank,
+        p.id as user_id,
+        p.username as display_name,
+        count(*)::integer as value
+      from public.matches m
+      join public.profiles p on p.id = m.winner_id
+      where m.winner_id is not null
+        and (from_time is null or coalesce(m.finished_at, m.created_at) >= from_time)
+      group by p.id, p.username
+      order by count(*) desc, p.username asc
+      limit least(greatest(limit_count, 1), 100);
+    return;
+  end if;
+
+  if metric = 'matches' then
+    return query
+      with match_players as (
+        select
+          (entry->>'accountId')::uuid as account_id
+        from public.matches m,
+        lateral jsonb_array_elements(m.results) entry
+        where (entry->>'accountId') is not null
+          and (from_time is null or coalesce(m.finished_at, m.created_at) >= from_time)
+      )
+      select
+        row_number() over (order by count(*) desc, p.username asc)::integer as rank,
+        p.id as user_id,
+        p.username as display_name,
+        count(*)::integer as value
+      from match_players mp
+      join public.profiles p on p.id = mp.account_id
+      group by p.id, p.username
+      order by count(*) desc, p.username asc
+      limit least(greatest(limit_count, 1), 100);
+    return;
+  end if;
+
+  raise exception 'Unsupported leaderboard metric: %', metric;
+end;
+$$;
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql

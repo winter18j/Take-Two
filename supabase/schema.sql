@@ -114,6 +114,24 @@ as $$
     );
 $$;
 
+create or replace function public.prevent_username_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  if old.username is distinct from new.username then
+    raise exception 'Username cannot be changed after account creation.';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists prevent_username_change on public.profiles;
+create trigger prevent_username_change
+before update on public.profiles
+for each row execute function public.prevent_username_change();
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
