@@ -5,11 +5,11 @@ export type SoundName = "button" | "draw" | "gameEnd" | "lose" | "matchIntro" | 
 export type MusicScene = "game" | "gameFinal" | "gameIntense" | "menu" | "queue" | "rooms";
 
 const soundSources: Record<SoundName, number> = {
-  button: require("../../resources/sounds/pick-card.wav"),
+  button: require("../../resources/sounds/hez2_adaptive_music_MASTERED/sfx_button_primary_soft_pluck_MASTERED.wav"),
   draw: require("../../resources/sounds/draw-card.mp3"),
   gameEnd: require("../../resources/sounds/game-end.wav"),
   lose: require("../../resources/sounds/player-loses.wav"),
-  matchIntro: require("../../resources/sounds/game-end.wav"),
+  matchIntro: require("../../resources/sounds/hez2_adaptive_music_MASTERED/sfx_players_presentation_transition_magic_swell_Dmin_MASTERED.wav"),
   pick: require("../../resources/sounds/pick-card.wav"),
   play: require("../../resources/sounds/play-card.mp3"),
   turn: require("../../resources/sounds/turn-change.wav"),
@@ -17,20 +17,20 @@ const soundSources: Record<SoundName, number> = {
 };
 
 const musicSources: Record<MusicScene, number> = {
-  game: require("../../resources/sounds/music.wav"),
-  gameFinal: require("../../resources/sounds/music.wav"),
-  gameIntense: require("../../resources/sounds/music.wav"),
-  menu: require("../../resources/sounds/music.wav"),
-  queue: require("../../resources/sounds/music.wav"),
-  rooms: require("../../resources/sounds/music.wav"),
+  game: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_game_calm_loop_92bpm_Dmin_MASTERED.wav"),
+  gameFinal: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_game_intensity_60s_loop_92bpm_Dmin_MASTERED.wav"),
+  gameIntense: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_game_intensity_30s_loop_92bpm_Dmin_MASTERED.wav"),
+  menu: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_main_menu_nostalgic_fantasy_loop_92bpm_Dmin_MASTERED.wav"),
+  queue: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_matchmaking_queue_pulse_loop_92bpm_Dmin_MASTERED.wav"),
+  rooms: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_rooms_warm_cafe_loop_92bpm_Dmin_MASTERED.wav"),
 };
 
 const volumes: Record<SoundName, number> = {
-  button: 0.34,
+  button: 0.65,
   draw: 0.7,
   gameEnd: 0.85,
   lose: 0.85,
-  matchIntro: 0.76,
+  matchIntro: 0.82,
   pick: 0.45,
   play: 0.72,
   turn: 0.38,
@@ -38,12 +38,12 @@ const volumes: Record<SoundName, number> = {
 };
 
 const musicVolumes: Record<MusicScene, number> = {
-  game: 0.2,
-  gameFinal: 0.28,
-  gameIntense: 0.24,
-  menu: 0.22,
-  queue: 0.2,
-  rooms: 0.18,
+  game: 0.66,
+  gameFinal: 0.72,
+  gameIntense: 0.69,
+  menu: 0.68,
+  queue: 0.66,
+  rooms: 0.64,
 };
 
 let configured = false;
@@ -185,7 +185,7 @@ export async function setMusicScene(scene: MusicScene) {
           fadeTimer = null;
         }
       }
-    }, 45);
+    }, 110);
   } catch {
     // Music transitions should never block the UI.
   }

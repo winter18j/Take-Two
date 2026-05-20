@@ -123,6 +123,7 @@ export default function App() {
   const animationQueueRef = useRef<TableAnimation[]>([]);
   const activeAnimationRef = useRef<TableAnimation | null>(null);
   const playedCardLayoutRef = useRef<{ cardId: string; point: Point } | null>(null);
+  const lastTurnSoundRef = useRef<{ playerId: string | null; roomId: string | null }>({ playerId: null, roomId: null });
 
   useEffect(() => {
     if (Platform.OS !== "android") {
@@ -264,6 +265,25 @@ export default function App() {
     }
     setGameMusicStartedAt(null);
   }, [visibleGame?.roomId, visibleGame?.status]);
+
+  useEffect(() => {
+    if (visibleGame?.status !== "playing") {
+      lastTurnSoundRef.current = { playerId: null, roomId: visibleGame?.roomId ?? null };
+      return;
+    }
+
+    const next = { playerId: visibleGame.currentPlayerId, roomId: visibleGame.roomId };
+    const previous = lastTurnSoundRef.current;
+    const changed =
+      previous.roomId === next.roomId &&
+      Boolean(previous.playerId) &&
+      previous.playerId !== next.playerId;
+    lastTurnSoundRef.current = next;
+
+    if (changed) {
+      playSoundPlaceholder("turn");
+    }
+  }, [visibleGame?.currentPlayerId, visibleGame?.roomId, visibleGame?.status]);
 
   useEffect(() => {
     setTurnStartedAt(Date.now());

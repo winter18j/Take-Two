@@ -1,5 +1,6 @@
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { gameTheme } from "../theme/gameTheme";
+import { playSound } from "../audio/soundEffects";
 
 const currencyIcons = {
   coins: require("../../resources/menu/icons/coins.png"),
@@ -21,7 +22,14 @@ export function CurrencyBadge({ amount, kind, onAdd }: CurrencyBadgeProps) {
         <Image source={currencyIcons[kind]} resizeMode="contain" style={styles.iconImage} />
       </View>
       <Text style={styles.value}>{amount.toLocaleString()}</Text>
-      <Pressable accessibilityRole="button" onPress={onAdd} style={styles.addButton}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          void playSound("button");
+          onAdd?.();
+        }}
+        style={styles.addButton}
+      >
         <Text style={styles.addText}>+</Text>
       </Pressable>
     </View>

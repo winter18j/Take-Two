@@ -1,6 +1,7 @@
 import type { ImageSourcePropType } from "react-native";
 import { Image, Pressable, StyleSheet, Text } from "react-native";
 import { gameTheme } from "../theme/gameTheme";
+import { playSound } from "../audio/soundEffects";
 
 type SmallIconButtonProps = {
   disabled?: boolean;
@@ -16,7 +17,10 @@ export function SmallIconButton({ disabled = false, iconSource, label, onPress, 
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => {
+        void playSound("button");
+        onPress();
+      }}
       style={({ pressed }) => [
         styles.button,
         round ? styles.round : null,
