@@ -28,11 +28,6 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "extra": {
-      "eas": {
-        "projectId": "238a8c7e-3e8c-4eea-ae82-6b52ea8403e9"
-      }
-    },
     "plugins": [
       "expo-audio",
       [
@@ -41,6 +36,12 @@
           "androidAppId": "ca-app-pub-5859429926694208~7889644634"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "bef1fe58-aaf9-4222-b251-31bad8d602cc"
+      }
+    },
+    "owner": "provavly"
   }
 }
