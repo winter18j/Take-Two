@@ -16,6 +16,7 @@ import {
   playCard,
   resolvePending,
   restartRoom,
+  returnToLobby,
   resumeSession,
   requireRoom,
   startGame,
@@ -240,6 +241,14 @@ io.use(async (socket, next) => {
   if (!error && data.user) {
     socket.data.accountId = data.user.id;
     socket.data.email = data.user.email;
+    if (supabase) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("wins")
+        .eq("id", data.user.id)
+        .maybeSingle();
+      socket.data.accountWins = profile?.wins ?? 0;
+    }
   }
   next();
 });
@@ -247,7 +256,7 @@ io.use(async (socket, next) => {
 io.on("connection", (socket) => {
   socket.on("createRoom", ({ name }: { name: string }) => {
     try {
-      const { room, player } = createRoom(io, socket.id, name, socket.data.accountId);
+      const { room, player } = createRoom(io, socket.id, name, socket.data.accountId, socket.data.accountWins);
       socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
       handleSocketError(socket.id, error);
@@ -256,7 +265,7 @@ io.on("connection", (socket) => {
 
   socket.on("joinRoom", ({ roomId, name }: { roomId: string; name: string }) => {
     try {
-      const { room, player } = joinRoom(io, socket.id, roomId, name, socket.data.accountId);
+      const { room, player } = joinRoom(io, socket.id, roomId, name, socket.data.accountId, socket.data.accountWins);
       socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
       handleSocketError(socket.id, error);
@@ -323,6 +332,14 @@ io.on("connection", (socket) => {
   socket.on("restartRoom", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       restartRoom(io, roomId, playerId);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("returnToLobby", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
+    try {
+      returnToLobby(io, roomId, playerId);
     } catch (error) {
       handleSocketError(socket.id, error);
     }

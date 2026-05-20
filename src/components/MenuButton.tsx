@@ -1,6 +1,7 @@
 import type { ImageSourcePropType } from "react-native";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { gameTheme } from "../theme/gameTheme";
+import { playSound } from "../audio/soundEffects";
 
 type MenuButtonProps = {
   disabled?: boolean;
@@ -27,7 +28,10 @@ export function MenuButton({
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => {
+        void playSound("button");
+        onPress();
+      }}
       style={({ pressed }) => [
         styles.button,
         size === "small" ? styles.smallButton : styles.largeButton,
@@ -49,8 +53,14 @@ export function MenuButton({
           </View>
         ) : null}
         <View style={styles.labelBlock}>
-          <Text style={[styles.label, size === "small" ? styles.smallLabel : null]}>{label}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          <Text
+            adjustsFontSizeToFit
+            numberOfLines={1}
+            style={[styles.label, size === "small" ? styles.smallLabel : null]}
+          >
+            {label}
+          </Text>
+          {subtitle ? <Text adjustsFontSizeToFit numberOfLines={1} style={styles.subtitle}>{subtitle}</Text> : null}
         </View>
       </View>
       <Text style={styles.sideOrnament}>+</Text>

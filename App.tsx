@@ -112,6 +112,7 @@ export default function App() {
   const [dailyRewardNextClaimAt, setDailyRewardNextClaimAt] = useState<string | null>(null);
   const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
   const [leaderboardBusy, setLeaderboardBusy] = useState(false);
+  const [gameMusicStartedAt, setGameMusicStartedAt] = useState<number | null>(null);
 
   const visibleGameRef = useRef<ClientGameState | null>(null);
   const sessionRef = useRef<Session | null>(null);
@@ -240,8 +241,12 @@ export default function App() {
 
   useEffect(() => {
     if (visibleGame?.status === "finished") {
-      setConfettiRun((run) => run + 1);
-      playSoundPlaceholder(visibleGame.loserId === session?.playerId ? "lose" : "gameEnd");
+      const didWin = visibleGame.winnerId === session?.playerId;
+      const didLose = visibleGame.loserId === session?.playerId;
+      if (didWin) {
+        setConfettiRun((run) => run + 1);
+      }
+      playSoundPlaceholder(didWin ? "win" : didLose ? "lose" : "gameEnd");
       setTimeout(() => {
         void loadEconomy();
       }, 1800);
@@ -251,6 +256,14 @@ export default function App() {
       }
     }
   }, [lastAdShownAt, session?.playerId, visibleGame?.loserId, visibleGame?.status, visibleGame?.winnerId]);
+
+  useEffect(() => {
+    if (visibleGame?.status === "playing") {
+      setGameMusicStartedAt((startedAt) => startedAt ?? Date.now());
+      return;
+    }
+    setGameMusicStartedAt(null);
+  }, [visibleGame?.roomId, visibleGame?.status]);
 
   useEffect(() => {
     setTurnStartedAt(Date.now());
@@ -348,6 +361,25 @@ export default function App() {
     : visibleGame.status === "lobby"
       ? "lobby"
       : "game";
+
+  useEffect(() => {
+    const elapsed = gameMusicStartedAt ? (now - gameMusicStartedAt) / 1000 : 0;
+    const scene = matchmaking.queued
+      ? "queue"
+      : appMode === "lobby"
+        ? "rooms"
+        : visibleGame?.status === "playing"
+          ? elapsed >= 60
+            ? "gameFinal"
+            : elapsed >= 30
+              ? "gameIntense"
+              : "game"
+          : "menu";
+
+    void import("./src/audio/soundEffects")
+      .then(({ setMusicScene }) => setMusicScene(scene))
+      .catch(() => undefined);
+  }, [appMode, gameMusicStartedAt, matchmaking.queued, now, visibleGame?.status]);
 
   const tableLabel = useMemo(() => {
     if (!visibleGame?.middleCard) {
@@ -963,6 +995,45 @@ export default function App() {
     }
   }
 
+  function backToRoom() {
+    if (session) {
+      emit("returnToLobby", session);
+      setScreen("room");
+    }
+  }
+
+  function queueAgain() {
+    if (!authUser) {
+      setError("Sign in to play random.");
+      setProfileOpen(true);
+      return;
+    }
+    if (!isDevAccount && wallet.coins < 25) {
+      setError("You need 25 coins to play random.");
+      return;
+    }
+    if (session && socket?.connected) {
+      socket.emit("leaveRoom", session);
+    }
+    setSession(null);
+    void AsyncStorage.removeItem(storedSessionKey);
+    setVisibleGame(null);
+    setActivityLog([]);
+    setActiveAnimation(null);
+    setPendingSevenCard(null);
+    queueBaseRef.current = null;
+    visibleGameRef.current = null;
+    animationQueueRef.current = [];
+    setScreen("menu");
+    setMatchmaking({ queued: true, seconds: 0 });
+    if (!socket?.connected) {
+      const nextSocket = connect({ resetState: false });
+      nextSocket.once("connect", () => nextSocket.emit("joinMatchmaking", { name }));
+      return;
+    }
+    emit("joinMatchmaking", { name });
+  }
+
   function cleanupToMenu() {
     if (session && socket?.connected) {
       socket.emit("leaveRoom", session);
@@ -1036,7 +1107,8 @@ export default function App() {
           onAdClosed={() => setAdDue(false)}
           onAdReward={grantAdReward}
           onShowInterstitialAd={showMatchEndInterstitialAd}
-          onConfirmWinnings={loadEconomy}
+          onBackToRoom={backToRoom}
+          onQueueAgain={queueAgain}
           onMainMenu={cleanupToMenu}
         />
       ) : screen === "menu" ? (

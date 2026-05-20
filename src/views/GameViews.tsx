@@ -97,7 +97,7 @@ const suitIconCards: Record<Suit, string> = {
 
 const CARD_FACE_RESIZE_METHOD = "resize" as const;
 
-type SoundName = "draw" | "gameEnd" | "lose" | "music" | "pick" | "play" | "turn" | "win";
+type SoundName = "button" | "draw" | "gameEnd" | "lose" | "matchIntro" | "pick" | "play" | "turn" | "win";
 
 export function playSoundPlaceholder(name: SoundName) {
   void import("../audio/soundEffects")
@@ -321,8 +321,9 @@ export function GameTable({
   adDue,
   onAdClosed,
   onAdReward,
-  onConfirmWinnings,
+  onBackToRoom,
   onMainMenu,
+  onQueueAgain,
   onShowInterstitialAd,
   onSevenSuit,
   pendingForYou,
@@ -361,6 +362,7 @@ export function GameTable({
       lastDealMiddleRef.current = game.middleCard?.id ?? null;
       setDealRun((run) => run + 1);
       setIntroRun((run) => run + 1);
+      playSoundPlaceholder("matchIntro");
     }
   }, [game.message, game.middleCard?.id, game.status]);
 
@@ -486,8 +488,9 @@ export function GameTable({
           game={game}
           onAdClosed={onAdClosed}
           onAdReward={onAdReward}
-          onConfirmWinnings={onConfirmWinnings}
+          onBackToRoom={onBackToRoom}
           onMainMenu={onMainMenu}
+          onQueueAgain={onQueueAgain}
           onShowInterstitialAd={onShowInterstitialAd}
           onRetry={onRetry}
           playerId={playerId}
@@ -723,8 +726,9 @@ function EndGameOverlay({
   game,
   onAdClosed,
   onAdReward,
-  onConfirmWinnings,
+  onBackToRoom,
   onMainMenu,
+  onQueueAgain,
   onShowInterstitialAd,
   onRetry,
   playerId,
@@ -733,8 +737,9 @@ function EndGameOverlay({
   game: ClientGameState;
   onAdClosed: () => void;
   onAdReward: (currency: "coins" | "gems") => void;
-  onConfirmWinnings: () => void;
+  onBackToRoom: () => void;
   onMainMenu: () => void;
+  onQueueAgain: () => void;
   onShowInterstitialAd: () => void;
   onRetry: () => void;
   playerId: string;
@@ -807,7 +812,11 @@ function EndGameOverlay({
           </View>
         ) : null}
         <View style={styles.confirmActions}>
-          <Button label="Confirm Winnings" onPress={onConfirmWinnings} tone="secondary" />
+          {game.isMatchmaking ? (
+            <Button label="Queue Again" onPress={onQueueAgain} tone="secondary" />
+          ) : (
+            <Button label="Back to Room" onPress={onBackToRoom} tone="secondary" />
+          )}
           <Button label="Main Menu" onPress={onMainMenu} />
         </View>
       </View>
@@ -1619,6 +1628,10 @@ function Button({
 }
 
 function PlayerRow({ active, isYou, player }: { active: boolean; isYou: boolean; player: Player }) {
+  const playerMeta = player.accountId
+    ? `${player.accountWins ?? 0} wins${player.isHost ? " | Host" : ""}`
+    : `Guest${player.isHost ? " | Host" : ""}`;
+
   return (
     <View style={[styles.playerRow, active ? styles.activePlayerRow : null]}>
       <View style={styles.avatar}>
@@ -1630,7 +1643,7 @@ function PlayerRow({ active, isYou, player }: { active: boolean; isYou: boolean;
           {isYou ? " (You)" : ""}
         </Text>
         <Text style={styles.helper}>
-          {player.handCount} cards {player.isHost ? " | Host" : ""}
+          {playerMeta}
         </Text>
       </View>
     </View>
@@ -2099,6 +2112,8 @@ export type Card = {
 
 export type Player = {
   id: string;
+  accountId?: string;
+  accountWins?: number;
   name: string;
   handCount: number;
   isHost: boolean;
@@ -2228,8 +2243,9 @@ type GameTableProps = {
   onPlayCard: (card: Card, sourcePoint?: Point) => void;
   onAdClosed: () => void;
   onAdReward: (currency: "coins" | "gems") => void;
-  onConfirmWinnings: () => void;
+  onBackToRoom: () => void;
   onMainMenu: () => void;
+  onQueueAgain: () => void;
   onShowInterstitialAd: () => void;
   onQuit: () => void;
   onResolvePending: () => void;

@@ -41,6 +41,13 @@ function activePlayers(room: Room) {
   return room.players.filter((player) => player.isConnected && !hasFinished(room, player));
 }
 
+function assignNextHost(room: Room) {
+  const nextHost = room.players.find((player) => player.isConnected) ?? room.players[0] ?? null;
+  room.players.forEach((player) => {
+    player.isHost = player.id === nextHost?.id;
+  });
+}
+
 function getNextActiveIndex(room: Room, fromIndex = room.currentPlayerIndex) {
   if (room.players.length === 0) {
     return 0;
@@ -61,6 +68,7 @@ function publicPlayers(room: Room) {
   return room.players.map((player) => ({
     id: player.id,
     accountId: player.accountId,
+    accountWins: player.accountWins,
     isBot: player.isBot,
     name: player.name,
     handCount: player.hand.length,
@@ -394,7 +402,7 @@ function maybeRunBotTurn(io: Server, room: Room) {
   }, 850).unref?.();
 }
 
-export function createRoom(io: Server, socketId: string, name: string, accountId?: string) {
+export function createRoom(io: Server, socketId: string, name: string, accountId?: string, accountWins?: number) {
   const room: Room = {
     id: roomCode(),
     status: "lobby",
@@ -416,7 +424,7 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
     timer: null,
   };
 
-  const player = addPlayerToRoom(room, socketId, name, true, accountId);
+  const player = addPlayerToRoom(room, socketId, name, true, accountId, accountWins);
   room.scores[player.id] = 0;
   rooms.set(room.id, room);
   io.sockets.sockets.get(socketId)?.join(room.id);
@@ -424,10 +432,11 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
   return { room, player };
 }
 
-export function addPlayerToRoom(room: Room, socketId: string, name: string, isHost = false, accountId?: string) {
+export function addPlayerToRoom(room: Room, socketId: string, name: string, isHost = false, accountId?: string, accountWins?: number) {
   const player: Player = {
     id: randomUUID(),
     accountId,
+    accountWins,
     socketId,
     name: name.trim() || "Player",
     hand: [],
@@ -475,7 +484,7 @@ function addBotToRoom(room: Room) {
   return player;
 }
 
-export function joinRoom(io: Server, socketId: string, roomId: string, name: string, accountId?: string) {
+export function joinRoom(io: Server, socketId: string, roomId: string, name: string, accountId?: string, accountWins?: number) {
   const room = rooms.get(roomId.toUpperCase());
 
   if (!room) {
@@ -490,7 +499,7 @@ export function joinRoom(io: Server, socketId: string, roomId: string, name: str
     throw new Error("This room already has 4 players.");
   }
 
-  const player = addPlayerToRoom(room, socketId, name, false, accountId);
+  const player = addPlayerToRoom(room, socketId, name, false, accountId, accountWins);
   io.sockets.sockets.get(socketId)?.join(room.id);
   room.message = `${player.name} joined.`;
   emitRoom(io, room);
@@ -512,6 +521,41 @@ export function resumeSession(io: Server, socketId: string, roomId: string, play
   if (room.status === "playing") {
     scheduleTurnTimer(io, room);
   }
+  emitRoom(io, room);
+  return { room, player };
+}
+
+export function returnToLobby(io: Server, roomId: string, playerId: string) {
+  const room = requireRoom(roomId);
+  const player = requirePlayer(room, playerId);
+
+  if (room.isMatchmaking) {
+    throw new Error("Random matches cannot return to a private room.");
+  }
+  if (room.status !== "finished") {
+    emitRoom(io, room);
+    return { room, player };
+  }
+
+  clearTimer(room);
+  room.status = "lobby";
+  room.deck = [];
+  room.discard = [];
+  room.middleCard = null;
+  room.currentPlayerIndex = 0;
+  room.chosenSuit = null;
+  room.pendingAction = null;
+  room.turnExpiresAt = null;
+  room.winnerId = null;
+  room.loserId = null;
+  room.roundResults = [];
+  room.rematchRequests = [];
+  room.players.forEach((candidate) => {
+    candidate.hand = [];
+    candidate.isConnected = candidate.isConnected || candidate.id === player.id;
+  });
+  assignNextHost(room);
+  room.message = `${player.name} returned to the room.`;
   emitRoom(io, room);
   return { room, player };
 }
@@ -746,10 +790,11 @@ export function leaveRoom(io: Server, roomId: string, playerId: string) {
       return;
     }
 
-    if (player.isHost) {
-      room.players[0].isHost = true;
-    }
+    assignNextHost(room);
   } else if (room.status === "playing" && !hasFinished(room, player)) {
+    if (player.isHost) {
+      assignNextHost(room);
+    }
     if (activePlayers(room).length <= 1) {
       finishRoundByForfeit(room, player);
     } else if (getCurrentPlayer(room)?.id === player.id) {
@@ -768,6 +813,9 @@ export function handleDisconnect(io: Server, socketId: string) {
     if (player) {
       player.isConnected = false;
       room.message = `${player.name} disconnected.`;
+      if (player.isHost) {
+        assignNextHost(room);
+      }
       if (room.status === "playing" && !hasFinished(room, player)) {
         if (getCurrentPlayer(room)?.id === player.id && activePlayers(room).length > 1) {
           moveToNext(room);

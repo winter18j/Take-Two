@@ -16,6 +16,7 @@ type TopBarProps = {
   musicMuted: boolean;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
+  onOpenShop: () => void;
   onToggleMusicMute: () => void;
   playerName: string;
 };
@@ -26,22 +27,23 @@ export function TopBar({
   musicMuted,
   onOpenProfile,
   onOpenSettings,
+  onOpenShop,
   onToggleMusicMute,
   playerName,
 }: TopBarProps) {
   return (
     <View style={styles.topBar}>
-      <View style={styles.profileCluster}>
-        <SmallIconButton iconSource={topBarIcons.profile} label="Profile" onPress={onOpenProfile} round size="large" />
-        <View style={styles.profileTextBlock}>
-          <Text numberOfLines={1} style={styles.playerName}>{playerName || "PlayerOne"}</Text>
+      <View style={styles.leftCluster}>
+        <CurrencyBadge amount={gems} kind="gems" onAdd={onOpenShop} />
+        <View style={styles.profileCluster}>
+          <SmallIconButton iconSource={topBarIcons.profile} label="Profile" onPress={onOpenProfile} round size="large" />
+          <View style={styles.profileTextBlock}>
+            <Text numberOfLines={1} style={styles.playerName}>{playerName || "PlayerOne"}</Text>
+          </View>
         </View>
       </View>
-      <View style={styles.walletAndControls}>
-        <View style={styles.walletRow}>
-          <CurrencyBadge amount={coins} kind="coins" />
-          <CurrencyBadge amount={gems} kind="gems" />
-        </View>
+      <View style={styles.rightCluster}>
+        <CurrencyBadge amount={coins} kind="coins" onAdd={onOpenShop} />
         <View style={styles.controlRow}>
           <SmallIconButton iconSource={topBarIcons.settings} label="Settings" onPress={onOpenSettings} round />
           <SmallIconButton iconSource={musicMuted ? topBarIcons.soundOff : topBarIcons.soundOn} label="Sound" onPress={onToggleMusicMute} round />
@@ -76,19 +78,21 @@ const styles = StyleSheet.create({
   profileTextBlock: {
     flexShrink: 1,
   },
+  leftCluster: {
+    alignItems: "flex-start",
+    gap: 7,
+    flex: 1,
+  },
+  rightCluster: {
+    alignItems: "flex-end",
+    gap: 7,
+    flex: 1,
+  },
   topBar: {
-    alignItems: "center",
+    alignItems: "flex-start",
     flexDirection: "row",
     justifyContent: "space-between",
+    paddingTop: 8,
     width: "100%",
-  },
-  walletAndControls: {
-    alignItems: "flex-end",
-    gap: 8,
-  },
-  walletRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 8,
   },
 });

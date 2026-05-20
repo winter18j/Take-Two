@@ -154,6 +154,7 @@ export function MainMenuScreen({
             musicMuted={musicMuted}
             onOpenProfile={onOpenProfile}
             onOpenSettings={onOpenSettings}
+            onOpenShop={() => setView("shop")}
             onToggleMusicMute={onToggleMusicMute}
             playerName={name}
           />
@@ -581,14 +582,14 @@ function NavItem({
       <View style={[styles.navIconPlate, active ? styles.navIconPlateActive : null]}>
         <Image source={iconSource} resizeMode="contain" style={styles.navIcon} />
       </View>
-      <Text style={styles.navLabel}>{label}</Text>
+      <Text adjustsFontSizeToFit numberOfLines={1} style={styles.navLabel}>{label}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   actions: {
-    gap: 12,
+    gap: 14,
     maxWidth: 390,
     width: "100%",
   },
@@ -616,16 +617,16 @@ const styles = StyleSheet.create({
   content: {
     alignItems: "center",
     flexGrow: 1,
-    gap: 16,
-    justifyContent: "center",
+    gap: 18,
+    justifyContent: "flex-start",
     paddingBottom: 96,
     paddingHorizontal: 14,
-    paddingTop: 20,
+    paddingTop: 42,
   },
   keyboardView: {
     flex: 1,
     paddingHorizontal: 14,
-    paddingTop: Platform.OS === "android" ? 4 : 2,
+    paddingTop: Platform.OS === "android" ? 2 : 0,
   },
   leaderboardName: {
     color: gameTheme.colors.cream,
@@ -738,7 +739,7 @@ const styles = StyleSheet.create({
   },
   shade: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.26)",
+    backgroundColor: "rgba(0,0,0,0.18)",
   },
   segment: {
     alignItems: "center",
