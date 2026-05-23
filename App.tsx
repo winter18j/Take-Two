@@ -66,6 +66,35 @@ type LeaderboardRow = {
   user_id: string;
   value: number;
 };
+type FriendRow = {
+  friend_id: string;
+  last_seen_at: string;
+  room_code: string | null;
+  room_size: number | null;
+  status: "offline" | "online" | "ingame" | "inroom";
+  username: string;
+};
+type FriendRequestRow = {
+  created_at: string;
+  friendship_id: string;
+  requester_id: string;
+  username: string;
+};
+type FriendMessage = {
+  body: string;
+  created_at: string;
+  id: string;
+  receiver_id: string;
+  sender_id: string;
+};
+type RoomChatMessage = {
+  body: string;
+  createdAt: string;
+  id: string;
+  playerId: string;
+  playerName: string;
+  roomId: string;
+};
 
 function normalizeUsername(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 24);
@@ -113,6 +142,11 @@ export default function App() {
   const [leaderboardRows, setLeaderboardRows] = useState<LeaderboardRow[]>([]);
   const [leaderboardBusy, setLeaderboardBusy] = useState(false);
   const [gameMusicStartedAt, setGameMusicStartedAt] = useState<number | null>(null);
+  const [friends, setFriends] = useState<FriendRow[]>([]);
+  const [friendRequests, setFriendRequests] = useState<FriendRequestRow[]>([]);
+  const [friendMessages, setFriendMessages] = useState<FriendMessage[]>([]);
+  const [selectedFriend, setSelectedFriend] = useState<FriendRow | null>(null);
+  const [roomChatMessages, setRoomChatMessages] = useState<RoomChatMessage[]>([]);
 
   const visibleGameRef = useRef<ClientGameState | null>(null);
   const sessionRef = useRef<Session | null>(null);
@@ -328,6 +362,7 @@ export default function App() {
   useEffect(() => {
     void loadEconomy();
     void loadProfileName();
+    void loadFriends();
   }, [authUser?.id]);
 
   useEffect(() => {
@@ -537,6 +572,9 @@ export default function App() {
     nextSocket.on("turn_changes", () => playSoundPlaceholder("turn"));
     nextSocket.on("matchmakingStatus", setMatchmaking);
     nextSocket.on("errorMessage", setError);
+    nextSocket.on("roomChatMessage", (message: RoomChatMessage) => {
+      setRoomChatMessages((items) => [message, ...items].slice(0, 50));
+    });
     setSocket(nextSocket);
     return nextSocket;
   }
@@ -766,6 +804,95 @@ export default function App() {
       return;
     }
     setLeaderboardRows((data ?? []) as LeaderboardRow[]);
+  }
+
+  async function loadFriends() {
+    if (!supabase || !authUser) {
+      setFriends([]);
+      setFriendRequests([]);
+      setFriendMessages([]);
+      setSelectedFriend(null);
+      return;
+    }
+
+    const [{ data: friendData, error: friendError }, { data: requestData, error: requestError }] = await Promise.all([
+      supabase.rpc("get_friends"),
+      supabase.rpc("get_friend_requests"),
+    ]);
+
+    if (friendError || requestError) {
+      setError(friendError?.message ?? requestError?.message ?? "Could not load friends.");
+      return;
+    }
+
+    setFriends((friendData ?? []) as FriendRow[]);
+    setFriendRequests((requestData ?? []) as FriendRequestRow[]);
+  }
+
+  async function sendFriendRequest(username: string) {
+    if (!supabase || !authUser) {
+      setError("Sign in to add friends.");
+      return;
+    }
+
+    const { error: requestError } = await supabase.rpc("send_friend_request", {
+      requested_username: username,
+    });
+    if (requestError) {
+      setError(requestError.message);
+      return;
+    }
+    setError("Friend request sent.");
+    await loadFriends();
+  }
+
+  async function respondFriendRequest(friendshipId: string, accept: boolean) {
+    if (!supabase || !authUser) {
+      setError("Sign in to manage friends.");
+      return;
+    }
+
+    const { error: responseError } = await supabase.rpc("respond_friend_request", {
+      accept,
+      friendship_uuid: friendshipId,
+    });
+    if (responseError) {
+      setError(responseError.message);
+      return;
+    }
+    await loadFriends();
+  }
+
+  async function openFriendChat(friend: FriendRow) {
+    setSelectedFriend(friend);
+    if (!supabase || !authUser) {
+      return;
+    }
+    const { data, error: messagesError } = await supabase.rpc("get_friend_messages", {
+      friend_uuid: friend.friend_id,
+      limit_count: 50,
+    });
+    if (messagesError) {
+      setError(messagesError.message);
+      return;
+    }
+    setFriendMessages(((data ?? []) as FriendMessage[]).reverse());
+  }
+
+  async function sendFriendMessage(body: string) {
+    if (!supabase || !authUser || !selectedFriend) {
+      setError("Choose a friend first.");
+      return;
+    }
+    const { error: messageError } = await supabase.rpc("send_friend_message", {
+      friend_uuid: selectedFriend.friend_id,
+      message_body: body,
+    });
+    if (messageError) {
+      setError(messageError.message);
+      return;
+    }
+    await openFriendChat(selectedFriend);
   }
 
   async function claimDailyReward() {
@@ -1009,6 +1136,15 @@ export default function App() {
     }
   }
 
+  function sendRoomChatMessage(body: string) {
+    if (!session || !socket?.connected) {
+      setError("Join a room to chat.");
+      return;
+    }
+
+    emit("roomChatMessage", { ...session, body });
+  }
+
   function retryRound() {
     if (session) {
       emit("restartRoom", session);
@@ -1038,6 +1174,7 @@ export default function App() {
     setSession(null);
     void AsyncStorage.removeItem(storedSessionKey);
     setVisibleGame(null);
+    setRoomChatMessages([]);
     setActivityLog([]);
     setActiveAnimation(null);
     setPendingSevenCard(null);
@@ -1064,6 +1201,7 @@ export default function App() {
     setSession(null);
     void AsyncStorage.removeItem(storedSessionKey);
     setVisibleGame(null);
+    setRoomChatMessages([]);
     setActivityLog([]);
     setActiveAnimation(null);
     setPendingSevenCard(null);
@@ -1140,9 +1278,18 @@ export default function App() {
           musicMuted={musicMuted}
           matchmaking={matchmaking}
           wallet={isDevAccount ? devWallet : wallet}
+          friends={friends}
+          friendMessages={friendMessages}
+          friendRequests={friendRequests}
           leaderboardBusy={leaderboardBusy}
           leaderboardRows={leaderboardRows}
+          selectedFriend={selectedFriend}
+          onLoadFriends={loadFriends}
           onLoadLeaderboard={loadLeaderboard}
+          onOpenFriendChat={openFriendChat}
+          onRespondFriendRequest={respondFriendRequest}
+          onSendFriendMessage={sendFriendMessage}
+          onSendFriendRequest={sendFriendRequest}
           dailyRewardReady={dailyRewardReady}
           dailyRewardNextClaimAt={dailyRewardNextClaimAt}
           isDevAccount={isDevAccount}
@@ -1180,7 +1327,9 @@ export default function App() {
           onJoinRoom={joinRoom}
           onCopyRoomCode={copyRoomCode}
           onShareRoomCode={shareRoomCode}
+          onSendRoomChat={sendRoomChatMessage}
           onStartGame={startGame}
+          roomChatMessages={roomChatMessages}
           roomAction={roomAction}
           session={session}
           setJoinCode={setJoinCode}

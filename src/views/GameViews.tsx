@@ -118,7 +118,9 @@ export function RoomScreen({
   onCreateRoom,
   onJoinRoom,
   onShareRoomCode,
+  onSendRoomChat,
   onStartGame,
+  roomChatMessages,
   roomAction,
   session,
   setJoinCode,
@@ -192,6 +194,11 @@ export function RoomScreen({
                 <Text style={styles.roomTapHint}>Tap to copy</Text>
               </Pressable>
               <Text style={styles.roomMessage}>{game.message}</Text>
+              <RoomChatPanel
+                messages={roomChatMessages}
+                onSend={onSendRoomChat}
+                playerId={session?.playerId ?? ""}
+              />
               <MenuButton label="Share Code" onPress={() => onShareRoomCode(game.roomId)} size="small" variant="secondary" />
               <View style={styles.playerList}>
                 {game.players.map((player) => (
@@ -217,6 +224,53 @@ export function RoomScreen({
         </ScrollView>
       </KeyboardAvoidingView>
     </ImageBackground>
+  );
+}
+
+function RoomChatPanel({
+  messages,
+  onSend,
+  playerId,
+}: {
+  messages: RoomChatMessage[];
+  onSend: (body: string) => void;
+  playerId: string;
+}) {
+  const [body, setBody] = useState("");
+
+  return (
+    <View style={styles.roomChatPanel}>
+      <Text style={styles.roomChatTitle}>Room Chat</Text>
+      <View style={styles.roomChatMessages}>
+        {messages.length === 0 ? <Text style={styles.roomHelper}>No chat yet.</Text> : null}
+        {messages.slice(0, 5).map((message) => (
+          <Text key={message.id} style={styles.roomChatMessage}>
+            {message.playerId === playerId ? "You" : message.playerName}: {message.body}
+          </Text>
+        ))}
+      </View>
+      <View style={styles.roomChatComposer}>
+        <TextInput
+          onChangeText={setBody}
+          placeholder="Say something"
+          placeholderTextColor="rgba(255, 244, 214, 0.52)"
+          style={styles.roomChatInput}
+          value={body}
+        />
+        <Pressable
+          onPress={() => {
+            if (!body.trim()) {
+              return;
+            }
+            onSend(body);
+            setBody("");
+          }}
+          style={styles.roomChatSend}
+        >
+          <Text style={styles.roomChatSendText}>Send</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -2224,7 +2278,9 @@ type RoomScreenProps = {
   onCreateRoom: () => void;
   onJoinRoom: () => void;
   onShareRoomCode: (roomId: string) => void;
+  onSendRoomChat: (body: string) => void;
   onStartGame: () => void;
+  roomChatMessages: RoomChatMessage[];
   roomAction: RoomAction;
   session: Session | null;
   setJoinCode: (code: string) => void;
@@ -2274,6 +2330,15 @@ type ConfettiPieceSpec = {
 export type ActivityItem = {
   id: string;
   text: string;
+};
+
+export type RoomChatMessage = {
+  body: string;
+  createdAt: string;
+  id: string;
+  playerId: string;
+  playerName: string;
+  roomId: string;
 };
 
 type PlayerHandProps = {
@@ -2406,6 +2471,58 @@ const styles = StyleSheet.create({
   roomActions: {
     flexDirection: "row",
     gap: 12,
+  },
+  roomChatComposer: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  roomChatInput: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(243, 213, 138, 0.28)",
+    borderRadius: 13,
+    borderWidth: 1,
+    color: gameTheme.colors.cream,
+    flex: 1,
+    fontSize: 13,
+    minHeight: 42,
+    paddingHorizontal: 10,
+  },
+  roomChatMessage: {
+    color: "rgba(255, 244, 214, 0.8)",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  roomChatMessages: {
+    gap: 5,
+  },
+  roomChatPanel: {
+    backgroundColor: "rgba(8, 11, 22, 0.42)",
+    borderColor: "rgba(243, 213, 138, 0.2)",
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    padding: 10,
+  },
+  roomChatSend: {
+    alignItems: "center",
+    backgroundColor: "rgba(216, 168, 79, 0.2)",
+    borderColor: "rgba(243, 213, 138, 0.48)",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+  roomChatSendText: {
+    color: gameTheme.colors.cream,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  roomChatTitle: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 13,
+    fontWeight: "900",
   },
   roomError: {
     color: "#ffb4aa",

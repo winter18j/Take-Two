@@ -1,0 +1,34 @@
+{
+  "pack": "Hez2 Adaptive Music V4 - HQ Clean Loop",
+  "description": "Original Dofus/Runescape-inspired adaptive audio pack using strings, pizzicato, celesta, warm sub bass, and clean electronic drums.",
+  "quality": {
+    "sample_rate": "48 kHz",
+    "bit_depth": "24-bit PCM WAV",
+    "loop_method": "circular note-tail wrapping + loop-safe circular reverb, not fade-out/fade-in tricks",
+    "music_loop_length": "40.00 seconds, 16 bars at 96 BPM",
+    "tempo": "96 BPM",
+    "key": "D minor / modal fantasy"
+  },
+  "routing": {
+    "main_menu": "music_main_menu_hq_cleanloop_v4_96bpm_Dmin.wav",
+    "rooms": "music_rooms_hq_cleanloop_v4_96bpm_Dmin.wav",
+    "matchmaking": "music_matchmaking_hq_cleanloop_v4_96bpm_Dmin.wav",
+    "players_presentation_transition": "sfx_players_presentation_hq_riser_v4_Dmin.wav",
+    "game_0_to_30_seconds": "music_game_start_hq_cleanloop_v4_96bpm_Dmin.wav",
+    "game_after_30_seconds": "music_game_30s_hq_cleanloop_v4_96bpm_Dmin.wav",
+    "game_after_60_seconds": "music_game_60s_hq_cleanloop_v4_96bpm_Dmin.wav"
+  },
+  "suggested_volumes": {
+    "main_menu_music": 0.66,
+    "rooms_music": 0.66,
+    "matchmaking_music": 0.62,
+    "game_music": 0.58,
+    "transition_sfx": 0.76,
+    "button_sfx": 0.48
+  },
+  "implementation": {
+    "crossfade_seconds": 1.5,
+    "looping": "Set music files to loop=true. Do not add fades at the loop boundary. Only crossfade when changing tracks.",
+    "mobile_note": "Keep game music around 0.56–0.62 on phone speakers."
+  }
+}

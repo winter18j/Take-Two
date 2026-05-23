@@ -63,6 +63,27 @@ type LeaderboardRow = {
   user_id: string;
   value: number;
 };
+export type FriendRow = {
+  friend_id: string;
+  last_seen_at: string;
+  room_code: string | null;
+  room_size: number | null;
+  status: "offline" | "online" | "ingame" | "inroom";
+  username: string;
+};
+export type FriendRequestRow = {
+  created_at: string;
+  friendship_id: string;
+  requester_id: string;
+  username: string;
+};
+export type FriendMessage = {
+  body: string;
+  created_at: string;
+  id: string;
+  receiver_id: string;
+  sender_id: string;
+};
 
 type MainMenuScreenProps = {
   authBusy: boolean;
@@ -72,6 +93,9 @@ type MainMenuScreenProps = {
   dailyRewardNextClaimAt: string | null;
   dailyRewardReady: boolean;
   isDevAccount: boolean;
+  friendMessages: FriendMessage[];
+  friendRequests: FriendRequestRow[];
+  friends: FriendRow[];
   leaderboardBusy: boolean;
   leaderboardRows: LeaderboardRow[];
   matchmaking: MatchmakingState;
@@ -84,15 +108,21 @@ type MainMenuScreenProps = {
   onCloseProfile: () => void;
   onCreateRoom: () => void;
   onJoinRoom: () => void;
+  onLoadFriends: () => void;
   onLoadLeaderboard: (metric: LeaderboardMetric, period: LeaderboardPeriod) => void;
   onOpenProfile: () => void;
+  onOpenFriendChat: (friend: FriendRow) => void;
   onOpenSettings: () => void;
+  onRespondFriendRequest: (friendshipId: string, accept: boolean) => void;
+  onSendFriendMessage: (body: string) => void;
+  onSendFriendRequest: (username: string) => void;
   onPlayRandom: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
   onSignUp: () => void;
   onToggleMusicMute: () => void;
   profileOpen: boolean;
+  selectedFriend: FriendRow | null;
   setAuthEmail: (email: string) => void;
   setAuthPassword: (password: string) => void;
   setName: (name: string) => void;
@@ -108,6 +138,9 @@ export function MainMenuScreen({
   dailyRewardNextClaimAt,
   dailyRewardReady,
   isDevAccount,
+  friendMessages,
+  friendRequests,
+  friends,
   leaderboardBusy,
   leaderboardRows,
   matchmaking,
@@ -119,9 +152,14 @@ export function MainMenuScreen({
   onCloseProfile,
   onCreateRoom,
   onJoinRoom,
+  onLoadFriends,
   onLoadLeaderboard,
+  onOpenFriendChat,
   onOpenProfile,
   onOpenSettings,
+  onRespondFriendRequest,
+  onSendFriendMessage,
+  onSendFriendRequest,
   onPlayRandom,
   onSignIn,
   onSignOut,
@@ -129,13 +167,14 @@ export function MainMenuScreen({
   onToggleMusicMute,
   onWatchAdPack,
   profileOpen,
+  selectedFriend,
   setAuthEmail,
   setAuthPassword,
   setName,
   user,
   wallet,
 }: MainMenuScreenProps) {
-  const [view, setView] = useState<"customize" | "home" | "leaderboard" | "rooms" | "shop">("home");
+  const [view, setView] = useState<"customize" | "friends" | "home" | "leaderboard" | "rooms" | "shop">("home");
   const queueText = `Elapsed ${matchmaking.seconds ?? 0}s | ETA ${matchmaking.etaSeconds ?? 10}s`;
   const roomButtonsDisabled = matchmaking.queued;
 
@@ -212,6 +251,20 @@ export function MainMenuScreen({
                 busy={leaderboardBusy}
                 onLoadLeaderboard={onLoadLeaderboard}
                 rows={leaderboardRows}
+              />
+            ) : null}
+            {view === "friends" ? (
+              <FriendsView
+                friendMessages={friendMessages}
+                friendRequests={friendRequests}
+                friends={friends}
+                onLoadFriends={onLoadFriends}
+                onOpenFriendChat={onOpenFriendChat}
+                onRespondFriendRequest={onRespondFriendRequest}
+                onSendFriendMessage={onSendFriendMessage}
+                onSendFriendRequest={onSendFriendRequest}
+                selectedFriend={selectedFriend}
+                user={user}
               />
             ) : null}
 
@@ -332,13 +385,13 @@ function BottomNav({
   currentView,
   onChangeView,
 }: {
-  currentView: "customize" | "home" | "leaderboard" | "rooms" | "shop";
-  onChangeView: (view: "customize" | "home" | "leaderboard" | "rooms" | "shop") => void;
+  currentView: "customize" | "friends" | "home" | "leaderboard" | "rooms" | "shop";
+  onChangeView: (view: "customize" | "friends" | "home" | "leaderboard" | "rooms" | "shop") => void;
 }) {
   return (
     <View style={styles.bottomNav}>
       <NavItem label="Leaderboard" iconSource={menuIcons.navLeaderboard} active={currentView === "leaderboard"} onPress={() => onChangeView("leaderboard")} />
-      <NavItem label="Friends" iconSource={menuIcons.navFriends} disabled />
+      <NavItem label="Friends" iconSource={menuIcons.navFriends} active={currentView === "friends"} onPress={() => onChangeView("friends")} />
       <NavItem label="Home" iconSource={menuIcons.navHome} active={currentView === "home"} onPress={() => onChangeView("home")} />
       <NavItem label="History" iconSource={menuIcons.navHistory} disabled />
     </View>
@@ -507,6 +560,155 @@ function CustomizeView() {
       </MenuCard>
     </View>
   );
+}
+
+function FriendsView({
+  friendMessages,
+  friendRequests,
+  friends,
+  onLoadFriends,
+  onOpenFriendChat,
+  onRespondFriendRequest,
+  onSendFriendMessage,
+  onSendFriendRequest,
+  selectedFriend,
+  user,
+}: {
+  friendMessages: FriendMessage[];
+  friendRequests: FriendRequestRow[];
+  friends: FriendRow[];
+  onLoadFriends: () => void;
+  onOpenFriendChat: (friend: FriendRow) => void;
+  onRespondFriendRequest: (friendshipId: string, accept: boolean) => void;
+  onSendFriendMessage: (body: string) => void;
+  onSendFriendRequest: (username: string) => void;
+  selectedFriend: FriendRow | null;
+  user: User | null;
+}) {
+  const [friendPseudo, setFriendPseudo] = useState("");
+  const [messageBody, setMessageBody] = useState("");
+
+  useEffect(() => {
+    if (user) {
+      onLoadFriends();
+    }
+  }, [user?.id]);
+
+  if (!user) {
+    return (
+      <View style={styles.subView}>
+        <Text style={styles.subViewTitle}>Friends</Text>
+        <MenuCard>
+          <Text style={styles.rewardText}>Sign in to add friends, see requests, and chat.</Text>
+        </MenuCard>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.subView}>
+      <Text style={styles.subViewTitle}>Friends</Text>
+      <MenuCard>
+        <Text style={styles.storeSectionTitle}>Add Friend</Text>
+        <View style={styles.friendAddRow}>
+          <TextInput
+            autoCapitalize="none"
+            onChangeText={setFriendPseudo}
+            placeholder="pseudo"
+            placeholderTextColor="rgba(255, 244, 214, 0.52)"
+            style={[styles.profileInput, styles.friendInput]}
+            value={friendPseudo}
+          />
+          <Pressable
+            onPress={() => {
+              onSendFriendRequest(friendPseudo);
+              setFriendPseudo("");
+            }}
+            style={styles.friendSendButton}
+          >
+            <Text style={styles.friendSendText}>Add</Text>
+          </Pressable>
+        </View>
+      </MenuCard>
+
+      <MenuCard>
+        <Text style={styles.storeSectionTitle}>Requests</Text>
+        {friendRequests.length === 0 ? <Text style={styles.rewardText}>No pending requests.</Text> : null}
+        {friendRequests.map((request) => (
+          <View key={request.friendship_id} style={styles.friendRow}>
+            <Text style={styles.friendName}>{request.username}</Text>
+            <View style={styles.friendActions}>
+              <Pressable onPress={() => onRespondFriendRequest(request.friendship_id, true)} style={styles.friendMiniButton}>
+                <Text style={styles.friendMiniText}>Yes</Text>
+              </Pressable>
+              <Pressable onPress={() => onRespondFriendRequest(request.friendship_id, false)} style={styles.friendMiniButton}>
+                <Text style={styles.friendMiniText}>No</Text>
+              </Pressable>
+            </View>
+          </View>
+        ))}
+      </MenuCard>
+
+      <MenuCard>
+        <Text style={styles.storeSectionTitle}>Friend List</Text>
+        {friends.length === 0 ? <Text style={styles.rewardText}>No friends yet.</Text> : null}
+        {friends.map((friend) => (
+          <Pressable key={friend.friend_id} onPress={() => onOpenFriendChat(friend)} style={styles.friendRow}>
+            <View>
+              <Text style={styles.friendName}>{friend.username}</Text>
+              <Text style={styles.friendStatus}>{friendStatusLabel(friend)}</Text>
+            </View>
+            <Text style={styles.friendChatHint}>Chat</Text>
+          </Pressable>
+        ))}
+      </MenuCard>
+
+      {selectedFriend ? (
+        <MenuCard>
+          <Text style={styles.storeSectionTitle}>{selectedFriend.username}</Text>
+          <View style={styles.friendChatBox}>
+            {friendMessages.length === 0 ? <Text style={styles.rewardText}>No messages yet.</Text> : null}
+            {friendMessages.slice(-8).map((message) => (
+              <Text key={message.id} style={styles.friendMessage}>
+                {message.sender_id === selectedFriend.friend_id ? selectedFriend.username : "You"}: {message.body}
+              </Text>
+            ))}
+          </View>
+          <View style={styles.friendAddRow}>
+            <TextInput
+              onChangeText={setMessageBody}
+              placeholder="Message"
+              placeholderTextColor="rgba(255, 244, 214, 0.52)"
+              style={[styles.profileInput, styles.friendInput]}
+              value={messageBody}
+            />
+            <Pressable
+              onPress={() => {
+                onSendFriendMessage(messageBody);
+                setMessageBody("");
+              }}
+              style={styles.friendSendButton}
+            >
+              <Text style={styles.friendSendText}>Send</Text>
+            </Pressable>
+          </View>
+        </MenuCard>
+      ) : null}
+    </View>
+  );
+}
+
+function friendStatusLabel(friend: FriendRow) {
+  if (friend.status === "inroom") {
+    return `in room ${friend.room_size ?? 1}/4`;
+  }
+  if (friend.status === "ingame") {
+    return "in game";
+  }
+  if (friend.status === "online") {
+    return "online";
+  }
+  return "offline";
 }
 
 function LeaderboardView({
@@ -811,6 +1013,81 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 18,
     justifyContent: "center",
+  },
+  friendActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  friendAddRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  friendChatBox: {
+    gap: 6,
+    maxHeight: 210,
+  },
+  friendChatHint: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  friendInput: {
+    flex: 1,
+  },
+  friendMessage: {
+    color: "rgba(255, 244, 214, 0.82)",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  friendMiniButton: {
+    backgroundColor: "rgba(216, 168, 79, 0.18)",
+    borderColor: "rgba(243, 213, 138, 0.42)",
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  friendMiniText: {
+    color: gameTheme.colors.cream,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  friendName: {
+    color: gameTheme.colors.cream,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  friendRow: {
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(243, 213, 138, 0.18)",
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  friendSendButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(111, 59, 181, 0.86)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 14,
+    borderWidth: 1,
+    minHeight: 50,
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  friendSendText: {
+    color: gameTheme.colors.cream,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  friendStatus: {
+    color: "rgba(255, 244, 214, 0.64)",
+    fontSize: 12,
+    fontWeight: "800",
   },
   navIcon: {
     height: 22,

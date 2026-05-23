@@ -5,11 +5,11 @@ export type SoundName = "button" | "draw" | "gameEnd" | "lose" | "matchIntro" | 
 export type MusicScene = "game" | "gameFinal" | "gameIntense" | "menu" | "queue" | "rooms";
 
 const soundSources: Record<SoundName, number> = {
-  button: require("../../resources/sounds/hez2_adaptive_music_MASTERED/sfx_button_primary_soft_pluck_MASTERED.wav"),
+  button: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/sfx_button_primary_hq_pizzicato_v4.wav"),
   draw: require("../../resources/sounds/draw-card.mp3"),
   gameEnd: require("../../resources/sounds/game-end.wav"),
   lose: require("../../resources/sounds/player-loses.wav"),
-  matchIntro: require("../../resources/sounds/hez2_adaptive_music_MASTERED/sfx_players_presentation_transition_magic_swell_Dmin_MASTERED.wav"),
+  matchIntro: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/sfx_players_presentation_hq_riser_v4_Dmin.wav"),
   pick: require("../../resources/sounds/pick-card.wav"),
   play: require("../../resources/sounds/play-card.mp3"),
   turn: require("../../resources/sounds/turn-change.wav"),
@@ -17,12 +17,12 @@ const soundSources: Record<SoundName, number> = {
 };
 
 const musicSources: Record<MusicScene, number> = {
-  game: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_game_calm_loop_92bpm_Dmin_MASTERED.wav"),
-  gameFinal: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_game_intensity_60s_loop_92bpm_Dmin_MASTERED.wav"),
-  gameIntense: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_game_intensity_30s_loop_92bpm_Dmin_MASTERED.wav"),
-  menu: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_main_menu_nostalgic_fantasy_loop_92bpm_Dmin_MASTERED.wav"),
-  queue: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_matchmaking_queue_pulse_loop_92bpm_Dmin_MASTERED.wav"),
-  rooms: require("../../resources/sounds/hez2_adaptive_music_MASTERED/music_rooms_warm_cafe_loop_92bpm_Dmin_MASTERED.wav"),
+  game: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/music_game_start_hq_cleanloop_v4_96bpm_Dmin.wav"),
+  gameFinal: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/music_game_60s_hq_cleanloop_v4_96bpm_Dmin.wav"),
+  gameIntense: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/music_game_30s_hq_cleanloop_v4_96bpm_Dmin.wav"),
+  menu: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/music_main_menu_hq_cleanloop_v4_96bpm_Dmin.wav"),
+  queue: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/music_matchmaking_hq_cleanloop_v4_96bpm_Dmin.wav"),
+  rooms: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/music_rooms_hq_cleanloop_v4_96bpm_Dmin.wav"),
 };
 
 const volumes: Record<SoundName, number> = {

@@ -143,6 +143,26 @@ async function awardCoins(accountId: string, email: unknown, amount: number, rea
   });
 }
 
+async function updatePresence(
+  accountId: unknown,
+  status: "offline" | "online" | "ingame" | "inroom",
+  room?: { id: string; players: Array<unknown> } | null,
+) {
+  if (!supabase || typeof accountId !== "string") {
+    return;
+  }
+
+  await supabase
+    .from("profiles")
+    .update({
+      last_seen_at: new Date().toISOString(),
+      presence_room_code: room ? room.id : null,
+      presence_room_size: room ? room.players.length : null,
+      presence_status: status,
+    })
+    .eq("id", accountId);
+}
+
 function rewardForPlacement(playerCount: number, placement: number) {
   const rewards: Record<number, number[]> = {
     2: [40, 0],
@@ -174,6 +194,7 @@ async function tryStartMatchmakingRoom() {
     if (player.isBot) {
       return;
     }
+    void updatePresence(player.accountId, "ingame", room);
     io.to(player.socketId).emit("session", { roomId: room.id, playerId: player.id });
     io.to(player.socketId).emit("matchmakingStatus", { queued: false });
   });
@@ -249,6 +270,7 @@ io.use(async (socket, next) => {
         .maybeSingle();
       socket.data.accountWins = profile?.wins ?? 0;
     }
+    void updatePresence(data.user.id, "online");
   }
   next();
 });
@@ -257,6 +279,7 @@ io.on("connection", (socket) => {
   socket.on("createRoom", ({ name }: { name: string }) => {
     try {
       const { room, player } = createRoom(io, socket.id, name, socket.data.accountId, socket.data.accountWins);
+      void updatePresence(socket.data.accountId, "inroom", room);
       socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
       handleSocketError(socket.id, error);
@@ -266,6 +289,7 @@ io.on("connection", (socket) => {
   socket.on("joinRoom", ({ roomId, name }: { roomId: string; name: string }) => {
     try {
       const { room, player } = joinRoom(io, socket.id, roomId, name, socket.data.accountId, socket.data.accountWins);
+      void updatePresence(socket.data.accountId, "inroom", room);
       socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
       handleSocketError(socket.id, error);
@@ -313,6 +337,7 @@ io.on("connection", (socket) => {
   socket.on("resumeSession", ({ roomId, playerId, name }: { roomId: string; playerId: string; name?: string }) => {
     try {
       const { room, player } = resumeSession(io, socket.id, roomId, playerId, name);
+      void updatePresence(socket.data.accountId, room.status === "playing" ? "ingame" : "inroom", room);
       socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
       socket.emit("session", null);
@@ -323,6 +348,10 @@ io.on("connection", (socket) => {
   socket.on("startGame", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       startGame(io, roomId, playerId);
+      const room = requireRoom(roomId);
+      for (const player of room.players) {
+        void updatePresence(player.accountId, "ingame", room);
+      }
       void persistFinishedMatch(roomId);
     } catch (error) {
       handleSocketError(socket.id, error);
@@ -340,6 +369,10 @@ io.on("connection", (socket) => {
   socket.on("returnToLobby", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       returnToLobby(io, roomId, playerId);
+      const room = requireRoom(roomId);
+      for (const player of room.players) {
+        void updatePresence(player.accountId, "inroom", room);
+      }
     } catch (error) {
       handleSocketError(socket.id, error);
     }
@@ -349,6 +382,7 @@ io.on("connection", (socket) => {
     try {
       leaveRoom(io, roomId, playerId);
       void persistFinishedMatch(roomId);
+      void updatePresence(socket.data.accountId, "online");
       socket.leave(roomId);
       socket.emit("session", null);
     } catch (error) {
@@ -386,9 +420,35 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("roomChatMessage", ({ roomId, playerId, body }: { roomId: string; playerId: string; body: string }) => {
+    try {
+      const room = requireRoom(roomId);
+      const player = room.players.find((candidate) => candidate.id === playerId);
+      const text = body?.trim();
+      if (!player || player.socketId !== socket.id) {
+        throw new Error("You are not in this room.");
+      }
+      if (!text || text.length > 300) {
+        throw new Error("Message must be between 1 and 300 characters.");
+      }
+
+      io.to(room.id).emit("roomChatMessage", {
+        body: text,
+        createdAt: new Date().toISOString(),
+        id: `${Date.now()}-${player.id}`,
+        playerId: player.id,
+        playerName: player.name,
+        roomId: room.id,
+      });
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
   socket.on("disconnect", () => {
     matchmakingQueue.removeSocket(socket.id);
     handleDisconnect(io, socket.id);
+    void updatePresence(socket.data.accountId, "offline");
   });
 });
 
