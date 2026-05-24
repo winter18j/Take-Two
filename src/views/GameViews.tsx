@@ -119,6 +119,7 @@ export function RoomScreen({
   onJoinRoom,
   onShareRoomCode,
   onSendRoomChat,
+  onSetRoomRules,
   onStartGame,
   roomChatMessages,
   roomAction,
@@ -194,6 +195,9 @@ export function RoomScreen({
                 <Text style={styles.roomTapHint}>Tap to copy</Text>
               </Pressable>
               <Text style={styles.roomMessage}>{game.message}</Text>
+              {game.youAreHost ? (
+                <RoomRulesPanel rules={game.rules} onChange={onSetRoomRules} />
+              ) : null}
               <RoomChatPanel
                 messages={roomChatMessages}
                 onSend={onSendRoomChat}
@@ -241,14 +245,14 @@ function RoomChatPanel({
   return (
     <View style={styles.roomChatPanel}>
       <Text style={styles.roomChatTitle}>Room Chat</Text>
-      <View style={styles.roomChatMessages}>
+      <ScrollView style={styles.roomChatHistory} contentContainerStyle={styles.roomChatMessages}>
         {messages.length === 0 ? <Text style={styles.roomHelper}>No chat yet.</Text> : null}
-        {messages.slice(0, 5).map((message) => (
+        {messages.map((message) => (
           <Text key={message.id} style={styles.roomChatMessage}>
             {message.playerId === playerId ? "You" : message.playerName}: {message.body}
           </Text>
         ))}
-      </View>
+      </ScrollView>
       <View style={styles.roomChatComposer}>
         <TextInput
           onChangeText={setBody}
@@ -271,6 +275,43 @@ function RoomChatPanel({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+function RoomRulesPanel({
+  onChange,
+  rules,
+}: {
+  onChange: (rules: Partial<RoomRules>) => void;
+  rules: RoomRules;
+}) {
+  return (
+    <View style={styles.roomRulesPanel}>
+      <Text style={styles.roomChatTitle}>Rules</Text>
+      <RuleToggle
+        active={rules.chooseDrawCards}
+        label="Choose draw"
+        onPress={() => onChange({ chooseDrawCards: !rules.chooseDrawCards })}
+      />
+      <RuleToggle
+        active={rules.modifierCards}
+        label="Modifiers"
+        onPress={() => onChange({ modifierCards: !rules.modifierCards })}
+      />
+      <RuleToggle
+        active={rules.skipOwnTurnCard}
+        label="Skip card"
+        onPress={() => onChange({ skipOwnTurnCard: !rules.skipOwnTurnCard })}
+      />
+    </View>
+  );
+}
+
+function RuleToggle({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.ruleToggle, active ? styles.ruleToggleActive : null]}>
+      <Text style={[styles.ruleToggleText, active ? styles.ruleToggleTextActive : null]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -367,6 +408,7 @@ export function GameTable({
   currentPlayerName,
   game,
   onAnimationDone,
+  onChooseDrawCard,
   onDraw,
   onPlayCard,
   onQuit,
@@ -378,6 +420,7 @@ export function GameTable({
   onBackToRoom,
   onMainMenu,
   onQueueAgain,
+  onSkipTurnWithModifier,
   onShowInterstitialAd,
   onSevenSuit,
   pendingForYou,
@@ -488,12 +531,17 @@ export function GameTable({
         <View style={styles.centerPile}>
           <StaticCardFace card={game.middleCard} large />
         </View>
+        <ModifierStack card={game.activeModifier} />
         <DrawDeckButton canDraw={canDraw} count={game.deckCount} onDraw={onDraw} serverUrl={serverUrl} />
         <PendingActionOverlay
           game={game}
           onResolvePending={onResolvePending}
           playerId={playerId}
           pendingForYou={pendingForYou}
+        />
+        <SkipAbilityButton
+          enabled={game.activeModifier?.modifier === "skip_ability" && game.currentPlayerId === playerId}
+          onPress={onSkipTurnWithModifier}
         />
 
         <ActivityLog items={activityLog} />
@@ -536,6 +584,7 @@ export function GameTable({
           onChoose={onSevenSuit}
           serverUrl={serverUrl}
         />
+        <DrawChoiceOverlay choice={game.drawChoice} onChoose={onChooseDrawCard} />
         <ConfettiOverlay run={confettiRun} />
         <EndGameOverlay
           adDue={adDue}
@@ -1020,6 +1069,57 @@ function PendingActionOverlay({
     <Pressable onPress={onResolvePending} style={styles.pendingStackAction}>
       <Text style={styles.pendingActionText}>Skip</Text>
     </Pressable>
+  );
+}
+
+function ModifierStack({ card }: { card: Card | null }) {
+  if (!card) {
+    return null;
+  }
+
+  return (
+    <View style={styles.modifierStack}>
+      <SpecialCardFace card={card} compact />
+    </View>
+  );
+}
+
+function SkipAbilityButton({ enabled, onPress }: { enabled: boolean; onPress: () => void }) {
+  if (!enabled) {
+    return null;
+  }
+
+  return (
+    <Pressable onPress={onPress} style={styles.skipAbilityButton}>
+      <Text style={styles.skipAbilityText}>Skip Turn</Text>
+    </Pressable>
+  );
+}
+
+function DrawChoiceOverlay({
+  choice,
+  onChoose,
+}: {
+  choice: DrawChoice | null;
+  onChoose: (cardId: string) => void;
+}) {
+  if (!choice) {
+    return null;
+  }
+
+  return (
+    <View style={styles.drawChoiceOverlay}>
+      <View style={styles.drawChoicePanel}>
+        <Text style={styles.drawChoiceTitle}>Choose one card</Text>
+        <View style={styles.drawChoiceCards}>
+          {choice.cards.map((card) => (
+            <Pressable key={card.id} onPress={() => onChoose(card.id)} style={styles.drawChoiceCard}>
+              <StaticCardFace card={card} />
+            </Pressable>
+          ))}
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -1786,6 +1886,10 @@ const StaticCardFace = memo(function StaticCardFace({
   const width = large ? STACK_WIDTH : CARD_WIDTH;
   const height = large ? STACK_HEIGHT : CARD_HEIGHT;
 
+  if (card?.type && card.type !== "playing") {
+    return <SpecialCardFace card={card} large={large} />;
+  }
+
   if (!source) {
     return (
       <View style={[styles.card, large ? styles.largeCard : null]}>
@@ -1837,6 +1941,22 @@ function GameCard({
     );
   }
 
+  if (card.type && card.type !== "playing") {
+    return (
+      <Pressable
+        disabled={disabled || !onPress}
+        onPress={onPress}
+        onPressIn={() => animate(0.96)}
+        onPressOut={() => animate(1)}
+        style={[styles.cardTouchable, large ? styles.largeCardTouchable : null]}
+      >
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <SpecialCardFace card={card} large={large} disabled={disabled} />
+        </Animated.View>
+      </Pressable>
+    );
+  }
+
   return (
     <Pressable
       disabled={disabled || !onPress}
@@ -1862,6 +1982,44 @@ function GameCard({
       </Animated.View>
     </Pressable>
   );
+}
+
+function SpecialCardFace({
+  card,
+  compact,
+  disabled,
+  large,
+}: {
+  card: Card;
+  compact?: boolean;
+  disabled?: boolean;
+  large?: boolean;
+}) {
+  const label = card.type === "skip_turn" ? "Skip" : modifierShortLabel(card.modifier);
+  const subLabel = card.type === "skip_turn" ? "Turn" : "Modifier";
+  return (
+    <View style={[
+      styles.specialCard,
+      large ? styles.largeCard : null,
+      compact ? styles.compactModifierCard : null,
+      disabled ? styles.cardDisabled : null,
+    ]}>
+      <Text adjustsFontSizeToFit numberOfLines={1} style={styles.specialCardLabel}>{label}</Text>
+      <Text numberOfLines={1} style={styles.specialCardSubLabel}>{subLabel}</Text>
+      {disabled ? <View pointerEvents="none" style={styles.disabledCardOverlay} /> : null}
+    </View>
+  );
+}
+
+function modifierShortLabel(modifier: Card["modifier"]) {
+  const labels: Record<string, string> = {
+    choose_three: "Choose 3",
+    draw_half: "x0.5",
+    draw_one_half: "x1.5",
+    skip_ability: "Skip+",
+    timer_five: "5s",
+  };
+  return modifier ? labels[modifier] ?? "Mod" : "Mod";
 }
 
 export function inferTableAnimation(
@@ -2045,6 +2203,10 @@ function getHandStep(cardCount: number, tableWidth = 390) {
 
 export function sortHand(cards: Card[]) {
   return [...cards].sort((left, right) => {
+    if ((left.type ?? "playing") !== (right.type ?? "playing")) {
+      const typeOrder = { playing: 0, modifier: 1, skip_turn: 2 };
+      return typeOrder[left.type ?? "playing"] - typeOrder[right.type ?? "playing"];
+    }
     const suitDelta = suitSortOrder[left.suit] - suitSortOrder[right.suit];
     if (suitDelta !== 0) {
       return suitDelta;
@@ -2100,7 +2262,21 @@ export function canPlayClient(card: Card, game: ClientGameState, playerId?: stri
       return false;
     }
 
+    if (card.type === "skip_turn") {
+      return game.rules.skipOwnTurnCard;
+    }
+    if (card.type === "modifier") {
+      return game.rules.modifierCards;
+    }
     return game.pendingAction.type === "draw" ? card.rank === 2 : card.rank === 1;
+  }
+
+  if (card.type === "skip_turn") {
+    return game.rules.skipOwnTurnCard;
+  }
+
+  if (card.type === "modifier") {
+    return game.rules.modifierCards;
   }
 
   if (game.chosenSuit) {
@@ -2158,10 +2334,23 @@ const rankSortOrder: Record<Rank, number> = {
 
 export type Card = {
   id: string;
+  type?: "modifier" | "playing" | "skip_turn";
   suit: Suit;
   rank: Rank;
   imageKey: string;
   imagePath: string;
+  modifier?: "choose_three" | "draw_half" | "draw_one_half" | "skip_ability" | "timer_five";
+};
+
+export type RoomRules = {
+  chooseDrawCards: boolean;
+  modifierCards: boolean;
+  skipOwnTurnCard: boolean;
+};
+
+export type DrawChoice = {
+  cards: Card[];
+  playerId: string;
 };
 
 export type Player = {
@@ -2198,6 +2387,8 @@ export type ClientGameState = {
   middleCard: Card | null;
   currentPlayerId: string | null;
   chosenSuit: Suit | null;
+  activeModifier: Card | null;
+  drawChoice: DrawChoice | null;
   pendingAction: PendingAction | null;
   turnExpiresAt: number | null;
   canDraw: boolean;
@@ -2208,6 +2399,7 @@ export type ClientGameState = {
   scores: Record<string, number>;
   message: string;
   isMatchmaking: boolean;
+  rules: RoomRules;
   youAreHost: boolean;
 };
 
@@ -2279,6 +2471,7 @@ type RoomScreenProps = {
   onJoinRoom: () => void;
   onShareRoomCode: (roomId: string) => void;
   onSendRoomChat: (body: string) => void;
+  onSetRoomRules: (rules: Partial<RoomRules>) => void;
   onStartGame: () => void;
   roomChatMessages: RoomChatMessage[];
   roomAction: RoomAction;
@@ -2295,6 +2488,7 @@ type GameTableProps = {
   currentPlayerName: string;
   game: ClientGameState;
   onAnimationDone: () => void;
+  onChooseDrawCard: (cardId: string) => void;
   onDraw: () => void;
   onPlayCard: (card: Card, sourcePoint?: Point) => void;
   onAdClosed: () => void;
@@ -2303,6 +2497,7 @@ type GameTableProps = {
   onMainMenu: () => void;
   onQueueAgain: () => void;
   onShowInterstitialAd: () => void;
+  onSkipTurnWithModifier: () => void;
   onQuit: () => void;
   onResolvePending: () => void;
   onRetry: () => void;
@@ -2493,8 +2688,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+  roomChatHistory: {
+    maxHeight: 132,
+  },
   roomChatMessages: {
     gap: 5,
+    justifyContent: "flex-end",
   },
   roomChatPanel: {
     backgroundColor: "rgba(8, 11, 22, 0.42)",
@@ -2523,6 +2722,36 @@ const styles = StyleSheet.create({
     color: gameTheme.colors.goldLight,
     fontSize: 13,
     fontWeight: "900",
+  },
+  roomRulesPanel: {
+    backgroundColor: "rgba(8, 11, 22, 0.42)",
+    borderColor: "rgba(243, 213, 138, 0.2)",
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    padding: 10,
+  },
+  ruleToggle: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(243, 213, 138, 0.24)",
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  ruleToggleActive: {
+    backgroundColor: "rgba(216, 168, 79, 0.24)",
+    borderColor: gameTheme.colors.goldLight,
+  },
+  ruleToggleText: {
+    color: "rgba(255, 244, 214, 0.68)",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  ruleToggleTextActive: {
+    color: gameTheme.colors.cream,
   },
   roomError: {
     color: "#ffb4aa",
@@ -3463,6 +3692,49 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     width: CARD_WIDTH,
   },
+  specialCard: {
+    alignItems: "center",
+    backgroundColor: "rgba(35, 20, 59, 0.94)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 8,
+    borderWidth: 2,
+    height: CARD_HEIGHT,
+    justifyContent: "center",
+    padding: 8,
+    width: CARD_WIDTH,
+  },
+  specialCardLabel: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 24,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  specialCardSubLabel: {
+    color: gameTheme.colors.cream,
+    fontSize: 11,
+    fontWeight: "900",
+    marginTop: 4,
+    textAlign: "center",
+  },
+  skipAbilityButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(35, 20, 59, 0.84)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 18,
+    borderWidth: 1,
+    left: "50%",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    position: "absolute",
+    top: "57%",
+    transform: [{ translateX: -48 }],
+    zIndex: 12,
+  },
+  skipAbilityText: {
+    color: gameTheme.colors.cream,
+    fontSize: 13,
+    fontWeight: "900",
+  },
   cardBack: {
     alignItems: "center",
     backgroundColor: "#ffffff",
@@ -3540,6 +3812,10 @@ const styles = StyleSheet.create({
   cardDisabled: {
     borderColor: "#8d949c",
   },
+  compactModifierCard: {
+    height: 74,
+    width: 52,
+  },
   disabledCardOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(12, 16, 20, 0.46)",
@@ -3565,6 +3841,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
     textAlign: "center",
+  },
+  drawChoiceCard: {
+    marginHorizontal: 5,
+  },
+  drawChoiceCards: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+  },
+  drawChoiceOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.38)",
+    justifyContent: "center",
+    zIndex: 60,
+  },
+  drawChoicePanel: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.9)",
+    borderColor: "rgba(243, 213, 138, 0.58)",
+    borderRadius: 22,
+    borderWidth: 1,
+    gap: 12,
+    padding: 16,
+  },
+  drawChoiceTitle: {
+    color: gameTheme.colors.cream,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  modifierStack: {
+    left: "61%",
+    position: "absolute",
+    top: "42%",
+    zIndex: 8,
   },
   confettiLayer: {
     ...StyleSheet.absoluteFillObject,

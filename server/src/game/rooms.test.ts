@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addPlayerToRoom, createRoom, drawUntilPlayable, handleDisconnect, playCard, randomizePlayerOrderForRound, resolveTurnTimeout, restartRoom, resumeSession, startGame } from "./rooms.js";
+import { addPlayerToRoom, chooseDrawCard, createRoom, drawUntilPlayable, handleDisconnect, playCard, randomizePlayerOrderForRound, resolveTurnTimeout, restartRoom, resumeSession, setRoomRules, skipTurnWithModifier, startGame } from "./rooms.js";
 import { Card, Room, Suit } from "./types.js";
 
 function fakeIo() {
@@ -296,4 +296,110 @@ test("disconnected player can resume the same room session", () => {
   assert.equal(player.socketId, "socket-3");
   assert.equal(player.isConnected, true);
   assert.equal(room.status, "playing");
+});
+
+test("choose draw cards lets player pick one and returns the rest to deck", () => {
+  const { io } = fakeIo();
+  const { room, player } = createRoom(io, "socket-1", "Player 1");
+  addPlayerToRoom(room, "socket-2", "Player 2");
+  setRoomRules(io, room.id, player.id, { chooseDrawCards: true });
+  startGame(io, room.id, player.id);
+
+  room.currentPlayerIndex = room.players.findIndex((candidate) => candidate.id === player.id);
+  room.deck = [card("gold", 3), card("cups", 4), card("swords", 5)];
+  drawUntilPlayable(io, room.id, player.id);
+
+  assert.equal(room.drawChoice?.cards.length, 2);
+  chooseDrawCard(io, room.id, player.id, "cups-4");
+
+  assert.equal(player.hand.some((heldCard) => heldCard.id === "cups-4"), true);
+  assert.equal(room.deck[0]?.id, "gold-3");
+  assert.equal(room.drawChoice, null);
+});
+
+test("skip own turn card can pass a stacked draw penalty", () => {
+  const { io } = fakeIo();
+  const { room, player } = createRoom(io, "socket-1", "Player 1");
+  const secondPlayer = addPlayerToRoom(room, "socket-2", "Player 2");
+  const thirdPlayer = addPlayerToRoom(room, "socket-3", "Player 3");
+  setRoomRules(io, room.id, player.id, { skipOwnTurnCard: true });
+  startGame(io, room.id, player.id);
+
+  room.currentPlayerIndex = room.players.findIndex((candidate) => candidate.id === secondPlayer.id);
+  room.pendingAction = { amount: 8, expiresAt: Date.now() + 1000, targetPlayerId: secondPlayer.id, type: "draw" };
+  secondPlayer.hand = [{
+    id: "skip-turn-1",
+    imageKey: "skip-turn",
+    imagePath: "/cards/skip-turn.png",
+    rank: 10,
+    suit: "gold",
+    type: "skip_turn",
+  }];
+
+  playCard(io, room.id, secondPlayer.id, "skip-turn-1");
+
+  assert.equal(room.pendingAction?.type, "draw");
+  assert.equal(room.pendingAction?.amount, 8);
+  assert.equal(room.pendingAction?.targetPlayerId, thirdPlayer.id);
+});
+
+test("modifier cards can change draw penalty and only one modifier can be played per turn", () => {
+  const { io } = fakeIo();
+  const { room, player } = createRoom(io, "socket-1", "Player 1");
+  const secondPlayer = addPlayerToRoom(room, "socket-2", "Player 2");
+  setRoomRules(io, room.id, player.id, { modifierCards: true });
+  startGame(io, room.id, player.id);
+
+  room.currentPlayerIndex = room.players.findIndex((candidate) => candidate.id === player.id);
+  room.middleCard = card("gold", 2);
+  room.discard = [room.middleCard];
+  player.hand = [{
+    id: "modifier-draw-one-half-1",
+    imageKey: "modifier-draw-one-half",
+    imagePath: "/cards/modifier-draw-one-half.png",
+    modifier: "draw_one_half",
+    rank: 10,
+    suit: "gold",
+    type: "modifier",
+  }, {
+    id: "modifier-timer-five-1",
+    imageKey: "modifier-timer-five",
+    imagePath: "/cards/modifier-timer-five.png",
+    modifier: "timer_five",
+    rank: 5,
+    suit: "gold",
+    type: "modifier",
+  }, card("cups", 2)];
+
+  playCard(io, room.id, player.id, "modifier-draw-one-half-1");
+  assert.throws(() => playCard(io, room.id, player.id, "modifier-timer-five-1"), /cannot play that card/);
+  playCard(io, room.id, player.id, "cups-2");
+
+  assert.equal(room.activeModifier?.modifier, "draw_one_half");
+  assert.equal(room.pendingAction?.targetPlayerId, secondPlayer.id);
+  assert.equal(room.pendingAction?.type, "draw");
+  assert.equal(room.pendingAction?.amount, 3);
+});
+
+test("skip ability modifier lets current player skip without a skip card", () => {
+  const { io } = fakeIo();
+  const { room, player } = createRoom(io, "socket-1", "Player 1");
+  const secondPlayer = addPlayerToRoom(room, "socket-2", "Player 2");
+  setRoomRules(io, room.id, player.id, { modifierCards: true });
+  startGame(io, room.id, player.id);
+
+  room.currentPlayerIndex = room.players.findIndex((candidate) => candidate.id === player.id);
+  room.activeModifier = {
+    id: "modifier-skip-ability-1",
+    imageKey: "modifier-skip-ability",
+    imagePath: "/cards/modifier-skip-ability.png",
+    modifier: "skip_ability",
+    rank: 12,
+    suit: "gold",
+    type: "modifier",
+  };
+
+  skipTurnWithModifier(io, room.id, player.id);
+
+  assert.equal(room.players[room.currentPlayerIndex]?.id, secondPlayer.id);
 });

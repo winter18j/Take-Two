@@ -8,11 +8,22 @@ import {
   Player,
   RESPONSE_WINDOW_MS,
   Room,
+  RoomRules,
   Suit,
   TURN_WINDOW_MS,
 } from "./types.js";
 
 const rooms = new Map<string, Room>();
+const defaultRules: RoomRules = {
+  chooseDrawCards: false,
+  modifierCards: false,
+  skipOwnTurnCard: false,
+};
+const matchmakingRules: RoomRules = {
+  chooseDrawCards: true,
+  modifierCards: true,
+  skipOwnTurnCard: true,
+};
 
 function roomCode(): string {
   let code = "";
@@ -91,6 +102,8 @@ function toClientState(room: Room, player: Player): ClientGameState {
     middleCard: room.middleCard,
     currentPlayerId: getCurrentPlayer(room)?.id ?? null,
     chosenSuit: room.chosenSuit,
+    activeModifier: room.activeModifier,
+    drawChoice: room.drawChoice?.playerId === player.id ? room.drawChoice : null,
     pendingAction: room.pendingAction,
     turnExpiresAt: room.pendingAction?.expiresAt ?? room.turnExpiresAt,
     canDraw: canDrawCard(room, player),
@@ -101,6 +114,7 @@ function toClientState(room: Room, player: Player): ClientGameState {
     scores: room.scores,
     message: room.message,
     isMatchmaking: Boolean(room.isMatchmaking),
+    rules: room.rules,
     youAreHost: player.isHost,
   };
 }
@@ -133,6 +147,35 @@ function drawFromDeck(room: Room, count: number) {
   }
 
   return drawCards(room.deck, Math.min(count, room.deck.length));
+}
+
+function drawPenaltyAmount(room: Room, baseAmount: number) {
+  if (room.activeModifier?.modifier === "draw_one_half") {
+    return Math.ceil(baseAmount * 1.5);
+  }
+  if (room.activeModifier?.modifier === "draw_half") {
+    return Math.max(1, Math.ceil(baseAmount * 0.5));
+  }
+  return baseAmount;
+}
+
+function turnWindowMs(room: Room) {
+  return room.activeModifier?.modifier === "timer_five" ? 5_000 : TURN_WINDOW_MS;
+}
+
+function pendingWindowMs(room: Room) {
+  return room.activeModifier?.modifier === "timer_five" ? 5_000 : RESPONSE_WINDOW_MS;
+}
+
+function modifierLabel(modifier: Card["modifier"]) {
+  const labels: Record<string, string> = {
+    choose_three: "Choose 3",
+    draw_half: "0.5x draw",
+    draw_one_half: "1.5x draw",
+    skip_ability: "skip ability",
+    timer_five: "5s timer",
+  };
+  return modifier ? labels[modifier] ?? modifier : "modifier";
 }
 
 function drawStartingCard(room: Room) {
@@ -169,6 +212,18 @@ function canPlay(card: Card, room: Room, player: Player) {
     return false;
   }
 
+  if (room.drawChoice) {
+    return false;
+  }
+
+  if (card.type === "skip_turn") {
+    return Boolean(room.rules.skipOwnTurnCard);
+  }
+
+  if (card.type === "modifier") {
+    return Boolean(room.rules.modifierCards && !room.modifierPlayedThisTurn);
+  }
+
   if (room.pendingAction) {
     if (room.pendingAction.targetPlayerId !== player.id) {
       return false;
@@ -197,7 +252,7 @@ function canDrawCard(room: Room, player: Player) {
     return false;
   }
 
-  if (room.pendingAction || getCurrentPlayer(room)?.id !== player.id) {
+  if (room.pendingAction || room.drawChoice || getCurrentPlayer(room)?.id !== player.id) {
     return false;
   }
 
@@ -209,6 +264,7 @@ function setPending(io: Server, room: Room, pendingAction: PendingAction) {
   room.pendingAction = pendingAction;
   room.turnExpiresAt = null;
   room.currentPlayerIndex = room.players.findIndex((player) => player.id === pendingAction.targetPlayerId);
+  room.modifierPlayedThisTurn = false;
 
   room.timer = setTimeout(() => {
     resolvePending(io, room.id);
@@ -223,15 +279,17 @@ function scheduleTurnTimer(io: Server, room: Room) {
     return;
   }
 
-  room.turnExpiresAt = Date.now() + TURN_WINDOW_MS;
+  const windowMs = turnWindowMs(room);
+  room.turnExpiresAt = Date.now() + windowMs;
   room.timer = setTimeout(() => {
     resolveTurnTimeout(io, room.id);
-  }, TURN_WINDOW_MS);
+  }, windowMs);
   room.timer.unref?.();
 }
 
 function moveToNext(room: Room, fromIndex = room.currentPlayerIndex) {
   room.currentPlayerIndex = getNextActiveIndex(room, fromIndex);
+  room.modifierPlayedThisTurn = false;
 }
 
 export function randomizePlayerOrderForRound(room: Room, random = Math.random) {
@@ -308,6 +366,36 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   }
 
   const [playedCard] = player.hand.splice(cardIndex, 1);
+
+  if (playedCard.type === "modifier") {
+    room.activeModifier = playedCard;
+    room.modifierPlayedThisTurn = true;
+    room.message = `${player.name} played ${modifierLabel(playedCard.modifier)} modifier.`;
+    return true;
+  }
+
+  if (playedCard.type === "skip_turn") {
+    const previousPending = room.pendingAction;
+    room.discard.push(playedCard);
+    clearTimer(room);
+    room.pendingAction = null;
+    room.drawChoice = null;
+    if (previousPending?.targetPlayerId === player.id) {
+      const target = room.players[getNextActiveIndex(room)];
+      setPending(io, room, {
+        ...previousPending,
+        targetPlayerId: target.id,
+        expiresAt: Date.now() + pendingWindowMs(room),
+      });
+      room.message = `${player.name} passed the penalty to ${target.name}.`;
+    } else {
+      moveToNext(room);
+      scheduleTurnTimer(io, room);
+      room.message = `${player.name} skipped their turn.`;
+    }
+    return true;
+  }
+
   room.middleCard = playedCard;
   room.discard.push(playedCard);
   clearTimer(room);
@@ -335,7 +423,7 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
     setPending(io, room, {
       type: "skip",
       targetPlayerId: target.id,
-      expiresAt: Date.now() + RESPONSE_WINDOW_MS,
+      expiresAt: Date.now() + pendingWindowMs(room),
     });
     room.message = `${target.name} has 10 seconds to answer with a 1.`;
     return true;
@@ -346,8 +434,8 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
     setPending(io, room, {
       type: "draw",
       targetPlayerId: target.id,
-      amount: (previousPending?.type === "draw" ? previousPending.amount : 0) + 2,
-      expiresAt: Date.now() + RESPONSE_WINDOW_MS,
+      amount: (previousPending?.type === "draw" ? previousPending.amount : 0) + drawPenaltyAmount(room, 2),
+      expiresAt: Date.now() + pendingWindowMs(room),
     });
     room.message = `${target.name} has 10 seconds to stack a 2.`;
     return true;
@@ -412,6 +500,8 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
     middleCard: null,
     currentPlayerIndex: 0,
     chosenSuit: null,
+    activeModifier: null,
+    drawChoice: null,
     pendingAction: null,
     turnExpiresAt: null,
     winnerId: null,
@@ -421,6 +511,8 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
     scores: {},
     message: "Waiting for players.",
     isMatchmaking: false,
+    modifierPlayedThisTurn: false,
+    rules: { ...defaultRules },
     timer: null,
   };
 
@@ -544,6 +636,9 @@ export function returnToLobby(io: Server, roomId: string, playerId: string) {
   room.middleCard = null;
   room.currentPlayerIndex = 0;
   room.chosenSuit = null;
+  room.activeModifier = null;
+  room.drawChoice = null;
+  room.modifierPlayedThisTurn = false;
   room.pendingAction = null;
   room.turnExpiresAt = null;
   room.winnerId = null;
@@ -581,6 +676,7 @@ export function createMatchmakingRoom(
   }
 
   room.isMatchmaking = true;
+  room.rules = { ...matchmakingRules };
   startRound(io, room, { randomizePlayers: true });
   maybeRunBotTurn(io, room);
   return { room, players };
@@ -601,12 +697,28 @@ export function startGame(io: Server, roomId: string, playerId: string) {
   startRound(io, room, { randomizePlayers: true });
 }
 
+export function setRoomRules(io: Server, roomId: string, playerId: string, rules: Partial<RoomRules>) {
+  const room = requireRoom(roomId);
+  const host = room.players.find((player) => player.id === playerId);
+
+  if (!host?.isHost) {
+    throw new Error("Only the host can change room rules.");
+  }
+  if (room.status !== "lobby") {
+    throw new Error("Rules can only be changed before the game starts.");
+  }
+
+  room.rules = { ...room.rules, ...rules };
+  room.message = "Room rules updated.";
+  emitRoom(io, room);
+}
+
 function startRound(io: Server, room: Room, options: { randomizePlayers?: boolean } = {}) {
   if (options.randomizePlayers) {
     randomizePlayerOrderForRound(room);
   }
 
-  room.deck = shuffle(createDeck());
+  room.deck = shuffle(createDeck(room.rules));
   room.discard = [];
   room.players.forEach((player) => {
     player.hand = drawFromDeck(room, 4);
@@ -623,6 +735,9 @@ function startRound(io: Server, room: Room, options: { randomizePlayers?: boolea
   room.currentPlayerIndex = 0;
   room.pendingAction = null;
   room.chosenSuit = null;
+  room.activeModifier = null;
+  room.drawChoice = null;
+  room.modifierPlayedThisTurn = false;
   room.winnerId = null;
   room.loserId = null;
   room.roundResults = [];
@@ -699,6 +814,24 @@ export function drawUntilPlayable(io: Server, roomId: string, playerId: string) 
     throw new Error("You cannot draw again this turn.");
   }
 
+  if (room.rules.chooseDrawCards) {
+    const choiceCount = room.activeModifier?.modifier === "choose_three" ? 3 : 2;
+    const cards = drawFromDeck(room, choiceCount);
+    if (cards.length === 0) {
+      room.message = `${player.name} could not draw and lost the turn.`;
+      moveToNext(room);
+      scheduleTurnTimer(io, room);
+      emitRoom(io, room);
+      return;
+    }
+    clearTimer(room);
+    room.drawChoice = { cards, playerId: player.id };
+    room.turnExpiresAt = null;
+    room.message = `${player.name} is choosing a draw card.`;
+    emitRoom(io, room);
+    return;
+  }
+
   const [card] = drawFromDeck(room, 1);
 
   if (!card) {
@@ -713,6 +846,61 @@ export function drawUntilPlayable(io: Server, roomId: string, playerId: string) 
   room.message = `${player.name} drew 1 card.`;
   moveToNext(room);
   scheduleTurnTimer(io, room);
+  emitRoom(io, room);
+  maybeRunBotTurn(io, room);
+}
+
+export function chooseDrawCard(io: Server, roomId: string, playerId: string, cardId: string) {
+  const room = requireRoom(roomId);
+  const player = requirePlayer(room, playerId);
+  const choice = room.drawChoice;
+
+  if (!choice || choice.playerId !== player.id) {
+    throw new Error("No draw choice is waiting for you.");
+  }
+
+  const pickedIndex = choice.cards.findIndex((card) => card.id === cardId);
+  if (pickedIndex < 0) {
+    throw new Error("Choose one of the offered cards.");
+  }
+
+  const [picked] = choice.cards.splice(pickedIndex, 1);
+  player.hand.push(picked);
+  room.deck.unshift(...choice.cards);
+  room.drawChoice = null;
+  room.message = `${player.name} chose a draw card.`;
+  moveToNext(room);
+  scheduleTurnTimer(io, room);
+  emitRoom(io, room);
+  maybeRunBotTurn(io, room);
+}
+
+export function skipTurnWithModifier(io: Server, roomId: string, playerId: string) {
+  const room = requireRoom(roomId);
+  const player = requirePlayer(room, playerId);
+
+  if (room.activeModifier?.modifier !== "skip_ability") {
+    throw new Error("Skip ability is not active.");
+  }
+  if (getCurrentPlayer(room)?.id !== player.id || room.drawChoice) {
+    throw new Error("It is not your turn.");
+  }
+
+  clearTimer(room);
+  if (room.pendingAction?.targetPlayerId === player.id) {
+    const target = room.players[getNextActiveIndex(room)];
+    setPending(io, room, {
+      ...room.pendingAction,
+      targetPlayerId: target.id,
+      expiresAt: Date.now() + pendingWindowMs(room),
+    });
+    room.message = `${player.name} used skip ability and passed the penalty to ${target.name}.`;
+  } else {
+    room.pendingAction = null;
+    moveToNext(room);
+    scheduleTurnTimer(io, room);
+    room.message = `${player.name} used skip ability.`;
+  }
   emitRoom(io, room);
   maybeRunBotTurn(io, room);
 }

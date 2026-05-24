@@ -9,6 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   createRoom,
   createMatchmakingRoom,
+  chooseDrawCard,
   drawUntilPlayable,
   handleDisconnect,
   joinRoom,
@@ -18,7 +19,9 @@ import {
   restartRoom,
   returnToLobby,
   resumeSession,
+  setRoomRules,
   requireRoom,
+  skipTurnWithModifier,
   startGame,
 } from "./game/rooms.js";
 import { MatchmakingQueue } from "./game/matchmaking.js";
@@ -358,6 +361,14 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("setRoomRules", ({ roomId, playerId, rules }: { roomId: string; playerId: string; rules: Record<string, boolean> }) => {
+    try {
+      setRoomRules(io, roomId, playerId, rules);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
   socket.on("restartRoom", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       restartRoom(io, roomId, playerId);
@@ -405,6 +416,24 @@ io.on("connection", (socket) => {
   socket.on("drawUntilPlayable", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       drawUntilPlayable(io, roomId, playerId);
+      void persistFinishedMatch(roomId);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("chooseDrawCard", ({ roomId, playerId, cardId }: { roomId: string; playerId: string; cardId: string }) => {
+    try {
+      chooseDrawCard(io, roomId, playerId, cardId);
+      void persistFinishedMatch(roomId);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("skipTurnWithModifier", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
+    try {
+      skipTurnWithModifier(io, roomId, playerId);
       void persistFinishedMatch(roomId);
     } catch (error) {
       handleSocketError(socket.id, error);

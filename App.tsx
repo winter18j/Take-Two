@@ -573,7 +573,7 @@ export default function App() {
     nextSocket.on("matchmakingStatus", setMatchmaking);
     nextSocket.on("errorMessage", setError);
     nextSocket.on("roomChatMessage", (message: RoomChatMessage) => {
-      setRoomChatMessages((items) => [message, ...items].slice(0, 50));
+      setRoomChatMessages((items) => [...items, message].slice(-50));
     });
     setSocket(nextSocket);
     return nextSocket;
@@ -1145,6 +1145,24 @@ export default function App() {
     emit("roomChatMessage", { ...session, body });
   }
 
+  function chooseDrawCard(cardId: string) {
+    if (session) {
+      emit("chooseDrawCard", { ...session, cardId });
+    }
+  }
+
+  function skipTurnWithModifier() {
+    if (session) {
+      emit("skipTurnWithModifier", session);
+    }
+  }
+
+  function setRoomRules(rules: Partial<ClientGameState["rules"]>) {
+    if (session) {
+      emit("setRoomRules", { ...session, rules });
+    }
+  }
+
   function retryRound() {
     if (session) {
       emit("restartRoom", session);
@@ -1245,6 +1263,8 @@ export default function App() {
           game={visibleGame}
           onAnimationDone={finishAnimation}
           onDraw={drawCard}
+          onChooseDrawCard={chooseDrawCard}
+          onSkipTurnWithModifier={skipTurnWithModifier}
           onPlayCard={playCard}
           onResolvePending={resolvePending}
           onSevenSuit={playSevenWithSuit}
@@ -1328,6 +1348,7 @@ export default function App() {
           onCopyRoomCode={copyRoomCode}
           onShareRoomCode={shareRoomCode}
           onSendRoomChat={sendRoomChatMessage}
+          onSetRoomRules={setRoomRules}
           onStartGame={startGame}
           roomChatMessages={roomChatMessages}
           roomAction={roomAction}
