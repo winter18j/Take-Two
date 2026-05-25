@@ -75,6 +75,14 @@ function getNextActiveIndex(room: Room, fromIndex = room.currentPlayerIndex) {
   return fromIndex;
 }
 
+function visibleHandCount(room: Room, player: Player) {
+  if (hasFinished(room, player)) {
+    return 0;
+  }
+
+  return player.hand.filter((card) => card.type !== "modifier").length;
+}
+
 function publicPlayers(room: Room) {
   return room.players.map((player) => ({
     id: player.id,
@@ -82,7 +90,7 @@ function publicPlayers(room: Room) {
     accountWins: player.accountWins,
     isBot: player.isBot,
     name: player.name,
-    handCount: player.hand.length,
+    handCount: visibleHandCount(room, player),
     isHost: player.isHost,
     isConnected: player.isConnected,
     placement: room.roundResults.indexOf(player.id) >= 0
@@ -141,7 +149,7 @@ function isActionRank(card: Card) {
 
 function drawFromDeck(room: Room, count: number) {
   if (room.deck.length < count && room.discard.length > 1 && room.middleCard) {
-    const recycled = room.discard.filter((card) => card.id !== room.middleCard?.id);
+    const recycled = room.discard.filter((card) => card.id !== room.middleCard?.id && card.type !== "modifier");
     room.discard = [room.middleCard];
     room.deck = shuffle(recycled);
   }
@@ -165,6 +173,10 @@ function turnWindowMs(room: Room) {
 
 function pendingWindowMs(room: Room) {
   return room.activeModifier?.modifier === "timer_five" ? 5_000 : RESPONSE_WINDOW_MS;
+}
+
+function drawChoiceWindowMs(room: Room) {
+  return room.activeModifier?.modifier === "timer_five" ? 3_000 : RESPONSE_WINDOW_MS;
 }
 
 function modifierLabel(modifier: Card["modifier"]) {
@@ -292,6 +304,16 @@ function moveToNext(room: Room, fromIndex = room.currentPlayerIndex) {
   room.modifierPlayedThisTurn = false;
 }
 
+function returnLeftoverModifiersToDeck(room: Room, player: Player) {
+  const modifiers = player.hand.filter((card) => card.type === "modifier");
+  if (modifiers.length === 0) {
+    return;
+  }
+
+  player.hand = player.hand.filter((card) => card.type !== "modifier");
+  room.deck = shuffle([...room.deck, ...modifiers]);
+}
+
 export function randomizePlayerOrderForRound(room: Room, random = Math.random) {
   const players = [...room.players];
 
@@ -305,10 +327,12 @@ export function randomizePlayerOrderForRound(room: Room, random = Math.random) {
 }
 
 function finishPlayerIfNeeded(room: Room, player: Player) {
-  if (player.hand.length > 0 || hasFinished(room, player)) {
+  const remainingRoundCards = player.hand.filter((card) => card.type !== "modifier");
+  if (remainingRoundCards.length > 0 || hasFinished(room, player)) {
     return false;
   }
 
+  returnLeftoverModifiersToDeck(room, player);
   room.roundResults.push(player.id);
   if (room.roundResults.length === 1) {
     room.winnerId = player.id;
@@ -328,7 +352,7 @@ function finishRoundIfNeeded(room: Room) {
     room.roundResults.push(loser.id);
   }
 
-    room.status = "finished";
+  room.status = "finished";
   room.pendingAction = null;
   room.turnExpiresAt = null;
   room.loserId = loser?.id ?? null;
@@ -371,6 +395,14 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
     room.activeModifier = playedCard;
     room.modifierPlayedThisTurn = true;
     room.message = `${player.name} played ${modifierLabel(playedCard.modifier)} modifier.`;
+    if (finishPlayerIfNeeded(room, player)) {
+      if (finishRoundIfNeeded(room)) {
+        clearTimer(room);
+        return true;
+      }
+      moveToNext(room);
+      scheduleTurnTimer(io, room);
+    }
     return true;
   }
 
@@ -388,7 +420,20 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
         expiresAt: Date.now() + pendingWindowMs(room),
       });
       room.message = `${player.name} passed the penalty to ${target.name}.`;
+      if (finishPlayerIfNeeded(room, player) && finishRoundIfNeeded(room)) {
+        clearTimer(room);
+      }
     } else {
+      if (finishPlayerIfNeeded(room, player)) {
+        if (finishRoundIfNeeded(room)) {
+          clearTimer(room);
+          return true;
+        }
+        moveToNext(room);
+        scheduleTurnTimer(io, room);
+        room.message = `${player.name} finished and secured place ${room.roundResults.length}.`;
+        return true;
+      }
       moveToNext(room);
       scheduleTurnTimer(io, room);
       room.message = `${player.name} skipped their turn.`;
@@ -399,20 +444,6 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   room.middleCard = playedCard;
   room.discard.push(playedCard);
   clearTimer(room);
-
-  if (finishPlayerIfNeeded(room, player)) {
-    room.pendingAction = null;
-    if (finishRoundIfNeeded(room)) {
-      clearTimer(room);
-      room.message = `${player.name} finished first. ${room.message}`;
-      return true;
-    }
-
-    moveToNext(room);
-    scheduleTurnTimer(io, room);
-    room.message = `${player.name} finished and secured place ${room.roundResults.length}.`;
-    return true;
-  }
 
   const previousPending = room.pendingAction;
   room.pendingAction = null;
@@ -426,6 +457,10 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
       expiresAt: Date.now() + pendingWindowMs(room),
     });
     room.message = `${target.name} has 10 seconds to answer with a 1.`;
+    if (finishPlayerIfNeeded(room, player) && finishRoundIfNeeded(room)) {
+      clearTimer(room);
+      room.message = `${player.name} finished first. ${room.message}`;
+    }
     return true;
   }
 
@@ -438,6 +473,23 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
       expiresAt: Date.now() + pendingWindowMs(room),
     });
     room.message = `${target.name} has 10 seconds to stack a 2.`;
+    if (finishPlayerIfNeeded(room, player) && finishRoundIfNeeded(room)) {
+      clearTimer(room);
+      room.message = `${player.name} finished first. ${room.message}`;
+    }
+    return true;
+  }
+
+  if (finishPlayerIfNeeded(room, player)) {
+    if (finishRoundIfNeeded(room)) {
+      clearTimer(room);
+      room.message = `${player.name} finished first. ${room.message}`;
+      return true;
+    }
+
+    moveToNext(room);
+    scheduleTurnTimer(io, room);
+    room.message = `${player.name} finished and secured place ${room.roundResults.length}.`;
     return true;
   }
 
@@ -472,9 +524,13 @@ function maybeRunBotTurn(io: Server, room: Room) {
       if (playable) {
         applyPlayedCard(io, room, bot, playable, playable.rank === 7 ? playable.suit : undefined);
       } else if (canDrawCard(room, bot)) {
-        const [card] = drawFromDeck(room, 1);
+        const drawnOptions = drawFromDeck(room, room.rules.chooseDrawCards ? (room.activeModifier?.modifier === "choose_three" ? 3 : 2) : 1);
+        const [card, ...unchosen] = drawnOptions;
         if (card) {
           bot.hand.push(card);
+        }
+        if (unchosen.length > 0) {
+          room.deck.unshift(...unchosen);
         }
         room.message = `${bot.name} drew 1 card.`;
         moveToNext(room);
@@ -824,9 +880,15 @@ export function drawUntilPlayable(io: Server, roomId: string, playerId: string) 
       emitRoom(io, room);
       return;
     }
+    const maxChoiceExpiresAt = Date.now() + drawChoiceWindowMs(room);
+    const expiresAt = room.turnExpiresAt ? Math.min(room.turnExpiresAt, maxChoiceExpiresAt) : maxChoiceExpiresAt;
     clearTimer(room);
-    room.drawChoice = { cards, playerId: player.id };
-    room.turnExpiresAt = null;
+    room.drawChoice = { cards, expiresAt, playerId: player.id };
+    room.turnExpiresAt = expiresAt;
+    room.timer = setTimeout(() => {
+      resolveDrawChoiceTimeout(io, room.id);
+    }, Math.max(0, expiresAt - Date.now()));
+    room.timer.unref?.();
     room.message = `${player.name} is choosing a draw card.`;
     emitRoom(io, room);
     return;
@@ -864,6 +926,7 @@ export function chooseDrawCard(io: Server, roomId: string, playerId: string, car
     throw new Error("Choose one of the offered cards.");
   }
 
+  clearTimer(room);
   const [picked] = choice.cards.splice(pickedIndex, 1);
   player.hand.push(picked);
   room.deck.unshift(...choice.cards);
@@ -873,6 +936,17 @@ export function chooseDrawCard(io: Server, roomId: string, playerId: string, car
   scheduleTurnTimer(io, room);
   emitRoom(io, room);
   maybeRunBotTurn(io, room);
+}
+
+function resolveDrawChoiceTimeout(io: Server, roomId: string) {
+  const room = requireRoom(roomId);
+  const choice = room.drawChoice;
+
+  if (!choice || choice.cards.length === 0) {
+    return;
+  }
+
+  chooseDrawCard(io, roomId, choice.playerId, choice.cards[0].id);
 }
 
 export function skipTurnWithModifier(io: Server, roomId: string, playerId: string) {

@@ -20,6 +20,17 @@ import {
 import { MenuButton } from "../components/MenuButton";
 import { gameTheme } from "../theme/gameTheme";
 import { CardImageEngine } from "./rendering/CardImageEngine";
+import type { SharedValue } from "react-native-reanimated";
+import Reanimated, {
+  Easing as ReanimatedEasing,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 
 export const RESPONSE_WINDOW_SECONDS = 10;
 export const TURN_WINDOW_SECONDS = 15;
@@ -87,6 +98,12 @@ const cardImages: Record<string, number> = {
   "oros-10": require("../../resources/cards-opti/oros-10.webp"),
   "oros-11": require("../../resources/cards-opti/oros-11.webp"),
   "oros-12": require("../../resources/cards-opti/oros-12.webp"),
+  "mod_05": require("../../resources/cards-opti/mod_05.webp"),
+  "mod_15": require("../../resources/cards-opti/mod_15.webp"),
+  "mod_choose3": require("../../resources/cards-opti/mod_choose3.webp"),
+  "mod_skip": require("../../resources/cards-opti/mod_skip.webp"),
+  "mod_timer": require("../../resources/cards-opti/mod_timer.webp"),
+  "special_skip": require("../../resources/cards-opti/special_skip.webp"),
 };
 const suitIconCards: Record<Suit, string> = {
   gold: "oros-1",
@@ -1103,23 +1120,148 @@ function DrawChoiceOverlay({
   choice: DrawChoice | null;
   onChoose: (cardId: string) => void;
 }) {
+  const intro = useSharedValue(0);
+  const exit = useSharedValue(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!choice) {
+      intro.value = 0;
+      exit.value = 0;
+      setSelectedId(null);
+      return;
+    }
+
+    intro.value = 0;
+    exit.value = 0;
+    setSelectedId(null);
+    intro.value = withTiming(1, {
+      duration: 420,
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+    });
+  }, [choice?.expiresAt, choice?.playerId, intro, exit]);
+
+  useEffect(() => {
+    if (!choice) {
+      return undefined;
+    }
+
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(interval);
+  }, [choice]);
+
+  const dimStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(exit.value, [0, 1], [1, 0]),
+    };
+  });
+
   if (!choice) {
     return null;
   }
 
+  const secondsLeft = Math.max(0, Math.ceil((choice.expiresAt - now) / 1000));
+
+  function choose(cardId: string) {
+    if (selectedId) {
+      return;
+    }
+
+    setSelectedId(cardId);
+    playSoundPlaceholder("pick");
+    exit.value = withTiming(1, {
+      duration: 360,
+      easing: ReanimatedEasing.inOut(ReanimatedEasing.cubic),
+    }, (finished) => {
+      if (finished) {
+        runOnJS(onChoose)(cardId);
+      }
+    });
+  }
+
   return (
-    <View style={styles.drawChoiceOverlay}>
+    <View style={styles.drawChoiceOverlay} pointerEvents={selectedId ? "none" : "auto"}>
+      <Reanimated.View style={[styles.drawChoiceDim, dimStyle]} />
       <View style={styles.drawChoicePanel}>
-        <Text style={styles.drawChoiceTitle}>Choose one card</Text>
+        <Text style={styles.drawChoiceTitle}>Choose your card</Text>
+        <Text style={styles.drawChoiceTimer}>{secondsLeft}s</Text>
         <View style={styles.drawChoiceCards}>
-          {choice.cards.map((card) => (
-            <Pressable key={card.id} onPress={() => onChoose(card.id)} style={styles.drawChoiceCard}>
-              <StaticCardFace card={card} />
+          {choice.cards.map((card, index) => (
+            <Pressable key={card.id} onPress={() => choose(card.id)} style={styles.drawChoiceCard}>
+              <AnimatedDrawChoiceCard
+                card={card}
+                exit={exit}
+                index={index}
+                intro={intro}
+                selected={selectedId === card.id}
+                total={choice.cards.length}
+              />
             </Pressable>
           ))}
         </View>
+        <Text style={styles.drawChoiceCaption}>Choose carefully. This action cannot be cancelled.</Text>
       </View>
     </View>
+  );
+}
+
+function AnimatedDrawChoiceCard({
+  card,
+  exit,
+  index,
+  intro,
+  selected,
+  total,
+}: {
+  card: Card;
+  exit: SharedValue<number>;
+  index: number;
+  intro: SharedValue<number>;
+  selected: boolean;
+  total: number;
+}) {
+  const spreadOffset = (index - (total - 1) / 2) * 106;
+  const startOffset = 122 - index * 4;
+  const cardStyle = useAnimatedStyle(() => {
+    const rotateY = interpolate(intro.value, [0, 0.49, 0.51, 1], [0, 88, 88, 0]);
+    return {
+      transform: [
+        { translateX: interpolate(intro.value, [0, 1], [startOffset, 0]) },
+        { translateY: interpolate(intro.value, [0, 1], [112, 0]) },
+        { translateX: interpolate(exit.value, [0, 1], [0, selected ? -spreadOffset * 0.36 : 136 - spreadOffset]) },
+        { translateY: interpolate(exit.value, [0, 1], [0, selected ? 238 : 132]) },
+        { scale: interpolate(intro.value, [0, 0.65, 1], [0.48, 0.9, 1]) },
+        { scale: interpolate(exit.value, [0, 1], [1, selected ? 0.72 : 0.46]) },
+        { rotateY: `${rotateY}deg` },
+      ],
+    };
+  });
+  const backStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(intro.value, [0, 0.49, 0.51, 1], [1, 1, 0, 0]),
+    };
+  });
+  const faceStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(intro.value, [0, 0.49, 0.51, 1], [0, 0, 1, 1]),
+    };
+  });
+
+  return (
+    <Reanimated.View
+      renderToHardwareTextureAndroid
+      shouldRasterizeIOS
+      style={[styles.drawChoiceAnimatedCard, cardStyle]}
+    >
+      <Reanimated.View style={[styles.drawChoiceFace, backStyle]}>
+        <CardBack serverUrl="" />
+      </Reanimated.View>
+      <Reanimated.View style={[styles.drawChoiceFace, faceStyle]}>
+        <StaticCardFace card={card} />
+      </Reanimated.View>
+    </Reanimated.View>
   );
 }
 
@@ -1335,6 +1477,10 @@ function OpponentCardStack({
   serverUrl: string;
   side: OpponentSide;
 }) {
+  if (count <= 0) {
+    return null;
+  }
+
   const visibleCards = Math.min(Math.max(count, 1), OPPONENT_VISIBLE_LIMIT);
   const isSide = side === "left" || side === "right";
   const cardWidth = side === "top" ? CARD_WIDTH : OPPONENT_CARD_WIDTH;
@@ -1472,79 +1618,67 @@ function AnimationLayer({
   seats,
   serverUrl,
 }: AnimationLayerProps) {
-  const progress = useRef(new Animated.Value(0)).current;
+  const progress = useSharedValue(0);
 
   useEffect(() => {
     if (!activeAnimation) {
-      progress.setValue(0);
+      progress.value = 0;
       return;
     }
 
-    progress.setValue(0);
-    Animated.timing(progress, {
+    progress.value = 0;
+    progress.value = withTiming(1, {
       duration: activeAnimation.type === "play" ? 440 : 360,
-      easing: Easing.out(Easing.cubic),
-      toValue: 1,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+    }, (finished) => {
       if (finished) {
-        onDone();
+        runOnJS(onDone)();
       }
     });
   }, [activeAnimation, onDone, progress]);
+
+  const from = activeAnimation?.type === "draw"
+    ? positions.deck
+    : activeAnimation
+      ? getAnimationSource(activeAnimation, seats, positions)
+      : positions.deck;
+  const to = activeAnimation?.type === "draw"
+    ? getAnimationTarget(activeAnimation, seats, positions)
+    : positions.stack;
+  const isPlay = activeAnimation?.type === "play";
+  const animatedStyle = useAnimatedStyle(() => {
+    const rotate = interpolate(progress.value, [0, 0.5, 1], [0, isPlay ? 11 : 0, 0]);
+    const scale = isPlay
+      ? interpolate(progress.value, [0, 0.55, 1], [1, STACK_WIDTH / CARD_WIDTH + 0.14, STACK_WIDTH / CARD_WIDTH])
+      : interpolate(progress.value, [0, 0.55, 1], [DECK_WIDTH / CARD_WIDTH, 0.86, 1]);
+
+    return {
+      transform: [
+        { translateX: interpolate(progress.value, [0, 1], [from.x, to.x]) },
+        { translateY: interpolate(progress.value, [0, 1], [from.y, to.y]) },
+        { rotate: `${rotate}deg` },
+        { scale },
+      ],
+    };
+  });
 
   if (!activeAnimation) {
     return null;
   }
 
-  const from = activeAnimation.type === "draw"
-    ? positions.deck
-    : getAnimationSource(activeAnimation, seats, positions);
-  const to = activeAnimation.type === "draw"
-    ? getAnimationTarget(activeAnimation, seats, positions)
-    : positions.stack;
-  const translateX = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [from.x, to.x],
-  });
-  const translateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [from.y, to.y],
-  });
-  const rotate = progress.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: ["0deg", activeAnimation.type === "play" ? "11deg" : "0deg", "0deg"],
-  });
-  const scale = progress.interpolate({
-    inputRange: [0, 0.55, 1],
-    outputRange: activeAnimation.type === "play"
-      ? [1, STACK_WIDTH / CARD_WIDTH + 0.14, STACK_WIDTH / CARD_WIDTH]
-      : [DECK_WIDTH / CARD_WIDTH, 0.86, 1],
-  });
-
   return (
-    <Animated.View
+    <Reanimated.View
       pointerEvents="none"
       renderToHardwareTextureAndroid
       shouldRasterizeIOS
-      style={[
-        styles.flyingCard,
-        {
-          transform: [
-            { translateX },
-            { translateY },
-            { rotate },
-            { scale },
-          ],
-        },
-      ]}
+      style={[styles.flyingCard, animatedStyle]}
     >
       {activeAnimation.type === "draw" || !activeAnimation.card ? (
         <CardBack serverUrl={serverUrl} />
       ) : (
         <StaticCardFace card={activeAnimation.card} />
       )}
-    </Animated.View>
+    </Reanimated.View>
   );
 }
 
@@ -1609,50 +1743,35 @@ function DealCardFlight({
   piece: { delay: number; to: Point };
   serverUrl: string;
 }) {
-  const progress = useRef(new Animated.Value(0)).current;
+  const progress = useSharedValue(0);
 
   useEffect(() => {
-    progress.setValue(0);
-    Animated.timing(progress, {
-      delay: piece.delay,
+    progress.value = 0;
+    progress.value = withDelay(piece.delay, withTiming(1, {
       duration: 260,
-      easing: Easing.out(Easing.cubic),
-      toValue: 1,
-      useNativeDriver: true,
-    }).start();
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+    }));
   }, [piece.delay, progress]);
 
-  const translateX = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [from.x, piece.to.x],
-  });
-  const translateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [from.y, piece.to.y],
-  });
-  const scale = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [DECK_WIDTH / CARD_WIDTH, 0.72],
-  });
-  const opacity = progress.interpolate({
-    inputRange: [0, 0.12, 0.9, 1],
-    outputRange: [0, 1, 1, 0],
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(progress.value, [0, 0.12, 0.9, 1], [0, 1, 1, 0]),
+      transform: [
+        { translateX: interpolate(progress.value, [0, 1], [from.x, piece.to.x]) },
+        { translateY: interpolate(progress.value, [0, 1], [from.y, piece.to.y]) },
+        { scale: interpolate(progress.value, [0, 1], [DECK_WIDTH / CARD_WIDTH, 0.72]) },
+      ],
+    };
   });
 
   return (
-    <Animated.View
+    <Reanimated.View
       renderToHardwareTextureAndroid
       shouldRasterizeIOS
-      style={[
-        styles.flyingCard,
-        {
-          opacity,
-          transform: [{ translateX }, { translateY }, { scale }],
-        },
-      ]}
+      style={[styles.flyingCard, animatedStyle]}
     >
       <CardBack serverUrl={serverUrl} />
-    </Animated.View>
+    </Reanimated.View>
   );
 }
 
@@ -1922,15 +2041,17 @@ function GameCard({
   onPress?: () => void;
   serverUrl: string;
 }) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const scale = useSharedValue(1);
+  const pressStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   function animate(toValue: number) {
-    Animated.spring(scale, {
-      friction: 7,
-      tension: 170,
-      toValue,
-      useNativeDriver: true,
-    }).start();
+    scale.value = withSpring(toValue, {
+      damping: 16,
+      mass: 0.75,
+      stiffness: 260,
+    });
   }
 
   if (!card) {
@@ -1950,9 +2071,9 @@ function GameCard({
         onPressOut={() => animate(1)}
         style={[styles.cardTouchable, large ? styles.largeCardTouchable : null]}
       >
-        <Animated.View style={{ transform: [{ scale }] }}>
+        <Reanimated.View style={pressStyle}>
           <SpecialCardFace card={card} large={large} disabled={disabled} />
-        </Animated.View>
+        </Reanimated.View>
       </Pressable>
     );
   }
@@ -1965,12 +2086,12 @@ function GameCard({
       onPressOut={() => animate(1)}
       style={[styles.cardTouchable, large ? styles.largeCardTouchable : null]}
     >
-      <Animated.View
+      <Reanimated.View
         style={[
           styles.card,
           large ? styles.largeCard : null,
           disabled ? styles.cardDisabled : null,
-          { transform: [{ scale }] },
+          pressStyle,
         ]}
       >
         <CardImageEngine
@@ -1979,7 +2100,7 @@ function GameCard({
           width={large ? STACK_WIDTH : CARD_WIDTH}
         />
         {disabled ? <View pointerEvents="none" style={styles.disabledCardOverlay} /> : null}
-      </Animated.View>
+      </Reanimated.View>
     </Pressable>
   );
 }
@@ -1995,6 +2116,24 @@ function SpecialCardFace({
   disabled?: boolean;
   large?: boolean;
 }) {
+  const source = cardImages[card.imageKey];
+  const width = compact ? 58 : large ? STACK_WIDTH : CARD_WIDTH;
+  const height = compact ? 87 : large ? STACK_HEIGHT : CARD_HEIGHT;
+
+  if (source) {
+    return (
+      <View style={[
+        styles.card,
+        large ? styles.largeCard : null,
+        compact ? styles.compactModifierCard : null,
+        disabled ? styles.cardDisabled : null,
+      ]}>
+        <CardImageEngine height={height} source={source} width={width} />
+        {disabled ? <View pointerEvents="none" style={styles.disabledCardOverlay} /> : null}
+      </View>
+    );
+  }
+
   const label = card.type === "skip_turn" ? "Skip" : modifierShortLabel(card.modifier);
   const subLabel = card.type === "skip_turn" ? "Turn" : "Modifier";
   return (
@@ -2053,6 +2192,10 @@ export function inferTableAnimation(
       sourceHandCount: actorId === selfId ? previous.hand.length : undefined,
       type: "play",
     };
+  }
+
+  if (previous.drawChoice || next.drawChoice) {
+    return null;
   }
 
   if (next.deckCount < previous.deckCount) {
@@ -2350,6 +2493,7 @@ export type RoomRules = {
 
 export type DrawChoice = {
   cards: Card[];
+  expiresAt: number;
   playerId: string;
 };
 
@@ -3813,8 +3957,8 @@ const styles = StyleSheet.create({
     borderColor: "#8d949c",
   },
   compactModifierCard: {
-    height: 74,
-    width: 52,
+    height: 87,
+    width: 58,
   },
   disabledCardOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -3843,33 +3987,64 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   drawChoiceCard: {
-    marginHorizontal: 5,
+    height: CARD_HEIGHT,
+    marginHorizontal: 7,
+    width: CARD_WIDTH,
   },
   drawChoiceCards: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "center",
+    minHeight: CARD_HEIGHT + 10,
+  },
+  drawChoiceAnimatedCard: {
+    height: CARD_HEIGHT,
+    width: CARD_WIDTH,
+  },
+  drawChoiceCaption: {
+    color: "rgba(255, 244, 214, 0.82)",
+    fontSize: 12,
+    fontStyle: "italic",
+    fontWeight: "700",
+    maxWidth: 270,
+    textAlign: "center",
+  },
+  drawChoiceDim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.56)",
+  },
+  drawChoiceFace: {
+    ...StyleSheet.absoluteFillObject,
   },
   drawChoiceOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.38)",
     justifyContent: "center",
     zIndex: 60,
   },
   drawChoicePanel: {
     alignItems: "center",
-    backgroundColor: "rgba(8, 11, 22, 0.9)",
+    backgroundColor: "rgba(8, 11, 22, 0.34)",
     borderColor: "rgba(243, 213, 138, 0.58)",
-    borderRadius: 22,
-    borderWidth: 1,
+    borderRadius: 20,
+    borderWidth: 0,
     gap: 12,
-    padding: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  drawChoiceTimer: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 15,
+    fontWeight: "900",
+    marginTop: -8,
   },
   drawChoiceTitle: {
     color: gameTheme.colors.cream,
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "900",
+    textShadowColor: "rgba(0,0,0,0.55)",
+    textShadowOffset: { height: 1, width: 0 },
+    textShadowRadius: 7,
   },
   modifierStack: {
     left: "61%",

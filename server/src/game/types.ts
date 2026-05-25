@@ -28,6 +28,7 @@ export type RoomRules = {
 
 export type DrawChoice = {
   cards: Card[];
+  expiresAt: number;
   playerId: string;
 };
 

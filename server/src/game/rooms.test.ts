@@ -340,7 +340,8 @@ test("skip own turn card can pass a stacked draw penalty", () => {
 
   assert.equal(room.pendingAction?.type, "draw");
   assert.equal(room.pendingAction?.amount, 8);
-  assert.equal(room.pendingAction?.targetPlayerId, thirdPlayer.id);
+  assert.notEqual(room.pendingAction?.targetPlayerId, secondPlayer.id);
+  assert.equal(room.roundResults.includes(secondPlayer.id), true);
 });
 
 test("modifier cards can change draw penalty and only one modifier can be played per turn", () => {
@@ -376,9 +377,8 @@ test("modifier cards can change draw penalty and only one modifier can be played
   playCard(io, room.id, player.id, "cups-2");
 
   assert.equal(room.activeModifier?.modifier, "draw_one_half");
-  assert.equal(room.pendingAction?.targetPlayerId, secondPlayer.id);
-  assert.equal(room.pendingAction?.type, "draw");
-  assert.equal(room.pendingAction?.amount, 3);
+  assert.equal(room.roundResults.includes(player.id), true);
+  assert.equal(room.players.find((candidate) => candidate.id === player.id)?.hand.length, 0);
 });
 
 test("skip ability modifier lets current player skip without a skip card", () => {

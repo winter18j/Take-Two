@@ -5,6 +5,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient, Session as SupabaseSession, User } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Platform, SafeAreaView, Share } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { io, Socket } from "socket.io-client";
 import {
   ActivityItem,
@@ -1232,6 +1233,7 @@ export default function App() {
   }
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaView style={{ flex: 1, backgroundColor: "#101317" }}>
       <StatusBar hidden />
       {showLaunch ? (
@@ -1358,5 +1360,6 @@ export default function App() {
         />
       )}
     </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }

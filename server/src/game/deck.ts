@@ -10,11 +10,11 @@ const imageKeys: Record<Suit, string> = {
 const cardImageExt = process.env.CARD_IMAGE_EXT ?? "png";
 
 const modifierCards: Array<{ imageKey: string; modifier: ModifierKind; rank: Rank }> = [
-  { imageKey: "modifier-timer-five", modifier: "timer_five", rank: 5 },
-  { imageKey: "modifier-draw-one-half", modifier: "draw_one_half", rank: 10 },
-  { imageKey: "modifier-draw-half", modifier: "draw_half", rank: 11 },
-  { imageKey: "modifier-skip-ability", modifier: "skip_ability", rank: 12 },
-  { imageKey: "modifier-choose-three", modifier: "choose_three", rank: 3 },
+  { imageKey: "mod_timer", modifier: "timer_five", rank: 5 },
+  { imageKey: "mod_15", modifier: "draw_one_half", rank: 10 },
+  { imageKey: "mod_05", modifier: "draw_half", rank: 11 },
+  { imageKey: "mod_skip", modifier: "skip_ability", rank: 12 },
+  { imageKey: "mod_choose3", modifier: "choose_three", rank: 3 },
 ];
 
 export function createDeck(rules?: Partial<RoomRules>): Card[] {
@@ -40,8 +40,8 @@ export function createDeck(rules?: Partial<RoomRules>): Card[] {
       type: "skip_turn" as const,
       suit: "gold" as Suit,
       rank: 10 as Rank,
-      imageKey: "skip-turn",
-      imagePath: "/cards/skip-turn.png",
+      imageKey: "special_skip",
+      imagePath: "/cards/special_skip.png",
     })));
   }
   if (rules?.modifierCards) {
