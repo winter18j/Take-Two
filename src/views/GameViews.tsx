@@ -54,7 +54,8 @@ const DECK_WIDTH = Math.round(CARD_WIDTH * 0.5);
 const DECK_HEIGHT = Math.round(CARD_HEIGHT * 0.5);
 const STACK_WIDTH = Math.round(116 * 1.25);
 const STACK_HEIGHT = Math.round(174 * 1.25);
-const TABLE_IMAGE = require("../../resources/cards-opti/table-1.png");
+const TABLE_IMAGE = require("../../resources/backgrounds/game-background.png");
+const AUTH_BACKGROUND_IMAGE = require("../../resources/backgrounds/menu-main.png");
 const ROOM_MENU_IMAGE = require("../../resources/backgrounds/menu-rooms.png");
 const CARD_BACK_IMAGE = require("../../resources/cards-opti/cardback.webp");
 const cardImages: Record<string, number> = {
@@ -258,11 +259,24 @@ function RoomChatPanel({
   playerId: string;
 }) {
   const [body, setBody] = useState("");
+  const historyRef = useRef<ScrollView | null>(null);
+
+  useEffect(() => {
+    requestAnimationFrame(() => historyRef.current?.scrollToEnd({ animated: true }));
+  }, [messages.length]);
 
   return (
     <View style={styles.roomChatPanel}>
       <Text style={styles.roomChatTitle}>Room Chat</Text>
-      <ScrollView style={styles.roomChatHistory} contentContainerStyle={styles.roomChatMessages}>
+      <ScrollView
+        ref={historyRef}
+        nestedScrollEnabled
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator
+        style={styles.roomChatHistory}
+        contentContainerStyle={styles.roomChatMessages}
+        onContentSizeChange={() => historyRef.current?.scrollToEnd({ animated: true })}
+      >
         {messages.length === 0 ? <Text style={styles.roomHelper}>No chat yet.</Text> : null}
         {messages.map((message) => (
           <Text key={message.id} style={styles.roomChatMessage}>
@@ -357,9 +371,30 @@ export function AuthGateScreen({
   name: string;
   setName: (name: string) => void;
 }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const passwordMismatch = mode === "signup" && confirmPassword.length > 0 && confirmPassword !== authPassword;
+  const authDisabled =
+    authBusy ||
+    !authEmail.trim() ||
+    authPassword.length < 6 ||
+    (mode === "signup" && (!name.trim() || confirmPassword !== authPassword));
+
+  function submit() {
+    if (mode === "signup") {
+      if (confirmPassword !== authPassword) {
+        return;
+      }
+      onSignUp();
+      return;
+    }
+
+    onSignIn();
+  }
+
   return (
-    <ImageBackground source={TABLE_IMAGE} resizeMode="cover" style={styles.menuBackground}>
-      <View style={styles.menuShade} />
+    <ImageBackground source={AUTH_BACKGROUND_IMAGE} resizeMode="cover" style={styles.menuBackground}>
+      <View style={styles.authShade} />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
@@ -370,45 +405,66 @@ export function AuthGateScreen({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.mainMenuTitle}>Take Two</Text>
+          <Text style={styles.authTitle}>Take Two</Text>
+          <Text style={styles.authSubtitle}>Moroccan Card Battle</Text>
           <View style={styles.authPanel}>
-            <TextInput
-              onChangeText={setName}
-              placeholder="Player name"
-              placeholderTextColor="#8c9197"
-              style={styles.input}
-              value={name}
-            />
+            <View style={styles.authTabs}>
+              <Pressable
+                onPress={() => setMode("login")}
+                style={[styles.authTab, mode === "login" ? styles.authTabActive : null]}
+              >
+                <Text style={[styles.authTabText, mode === "login" ? styles.authTabTextActive : null]}>Login</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setMode("signup")}
+                style={[styles.authTab, mode === "signup" ? styles.authTabActive : null]}
+              >
+                <Text style={[styles.authTabText, mode === "signup" ? styles.authTabTextActive : null]}>Sign Up</Text>
+              </Pressable>
+            </View>
+            {mode === "signup" ? (
+              <TextInput
+                autoCapitalize="none"
+                onChangeText={setName}
+                placeholder="Choose pseudo"
+                placeholderTextColor="rgba(255, 244, 214, 0.52)"
+                style={styles.authInput}
+                value={name}
+              />
+            ) : null}
             <TextInput
               autoCapitalize="none"
               keyboardType="email-address"
               onChangeText={setAuthEmail}
               placeholder="Email"
-              placeholderTextColor="#8c9197"
-              style={styles.input}
+              placeholderTextColor="rgba(255, 244, 214, 0.52)"
+              style={styles.authInput}
               value={authEmail}
             />
             <TextInput
               onChangeText={setAuthPassword}
               placeholder="Password"
-              placeholderTextColor="#8c9197"
+              placeholderTextColor="rgba(255, 244, 214, 0.52)"
               secureTextEntry
-              style={styles.input}
+              style={styles.authInput}
               value={authPassword}
             />
-            <View style={styles.actions}>
-              <Button
-                disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
-                label="Sign In"
-                onPress={onSignIn}
-                tone="secondary"
+            {mode === "signup" ? (
+              <TextInput
+                onChangeText={setConfirmPassword}
+                placeholder="Confirm password"
+                placeholderTextColor="rgba(255, 244, 214, 0.52)"
+                secureTextEntry
+                style={[styles.authInput, passwordMismatch ? styles.authInputError : null]}
+                value={confirmPassword}
               />
-              <Button
-                disabled={authBusy || !authEmail.trim() || authPassword.length < 6}
-                label="Create Account"
-                onPress={onSignUp}
-              />
-            </View>
+            ) : null}
+            {passwordMismatch ? <Text style={styles.authError}>Passwords do not match.</Text> : null}
+            <Button
+              disabled={authDisabled}
+              label={mode === "signup" ? "Create Account" : "Login"}
+              onPress={submit}
+            />
             <Button label="Continue as Guest" onPress={onContinueGuest} tone="secondary" />
           </View>
           {disabledText ? <Text style={styles.menuNotice}>{disabledText}</Text> : null}
@@ -490,7 +546,7 @@ export function GameTable({
 
   return (
     <View ref={tableRef} style={styles.tableScreen} onLayout={handleLayout}>
-      <ImageBackground source={TABLE_IMAGE} resizeMode="cover" style={styles.tableBackground}>
+      <ImageBackground source={TABLE_IMAGE} resizeMode="stretch" style={styles.tableBackground}>
         <View style={styles.tableShade} />
         <Pressable style={styles.tableDeselectLayer} onPress={() => setSelectedCardId(null)} />
         <QuitButtonWithConfirm
@@ -544,6 +600,8 @@ export function GameTable({
             </View>
           ) : null}
         </View>
+
+        <GameplayCue game={game} playerId={playerId} />
 
         <View style={styles.centerPile}>
           <StaticCardFace card={game.middleCard} large />
@@ -884,7 +942,7 @@ function EndGameOverlay({
     .filter((player): player is Player => Boolean(player));
 
   return (
-    <View style={styles.endOverlay} pointerEvents="box-none">
+    <View style={styles.endOverlay}>
       <View style={styles.endPanel}>
         {adDue ? (
           <View style={styles.adPlaceholder}>
@@ -897,14 +955,29 @@ function EndGameOverlay({
           </View>
         ) : null}
         <Text style={styles.endTitle}>
-          {loser ? `${loser.name} loses` : "Round finished"}
+          {loser ? "Match Results" : "Round Finished"}
         </Text>
-        {orderedResults.map((player, index) => (
-          <Text key={player.id} style={styles.endResultText}>
-            {index + 1}. {player.name}
-            {player.id === playerId ? " (You)" : ""}
-          </Text>
-        ))}
+        <View style={styles.endResultsList}>
+          {orderedResults.map((player, index) => {
+            const reward = game.isMatchmaking
+              ? MATCH_REWARD_TABLE[game.players.length]?.[index] ?? 0
+              : 0;
+            const isLoser = player.id === game.loserId || index === orderedResults.length - 1;
+            return (
+              <View key={player.id} style={[styles.endResultRow, isLoser ? styles.endLoserRow : null]}>
+                <View style={styles.endResultNameBlock}>
+                  <Text style={styles.endResultName}>
+                    {index + 1}. {player.name}{player.id === playerId ? " (You)" : ""}
+                  </Text>
+                  <Text style={styles.endResultRole}>{isLoser ? "Final loser" : "Secured place"}</Text>
+                </View>
+                <Text style={[styles.endResultCoins, reward > 0 ? styles.endResultCoinsPositive : null]}>
+                  {game.isMatchmaking ? `+${reward}` : "-"}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
         {game.isMatchmaking ? (
           <View style={styles.scoreBlock}>
             <Text style={styles.endResultText}>Entry: -{MATCH_ENTRY_COST} coins</Text>
@@ -933,11 +1006,11 @@ function EndGameOverlay({
         ) : null}
         <View style={styles.confirmActions}>
           {game.isMatchmaking ? (
-            <Button label="Queue Again" onPress={onQueueAgain} tone="secondary" />
+            <Button label="Queue Again" onPress={onQueueAgain} />
           ) : (
             <Button label="Back to Room" onPress={onBackToRoom} tone="secondary" />
           )}
-          <Button label="Main Menu" onPress={onMainMenu} />
+          <Button label="Main Menu" onPress={onMainMenu} tone="secondary" />
         </View>
       </View>
     </View>
@@ -945,7 +1018,7 @@ function EndGameOverlay({
 }
 
 function RetryButton({ disabled, onRetry }: { disabled: boolean; onRetry: () => void }) {
-  return <Button disabled={disabled} label="Retry" onPress={onRetry} />;
+  return <Button disabled={disabled} label="Ask Rematch" onPress={onRetry} />;
 }
 
 function PlayerHand({
@@ -1086,6 +1159,91 @@ function PendingActionOverlay({
     <Pressable onPress={onResolvePending} style={styles.pendingStackAction}>
       <Text style={styles.pendingActionText}>Skip</Text>
     </Pressable>
+  );
+}
+
+function GameplayCue({ game, playerId }: { game: ClientGameState; playerId: string }) {
+  const [cue, setCue] = useState<{ key: string; subtitle: string; title: string } | null>(null);
+  const fade = useRef(new Animated.Value(0)).current;
+  const lift = useRef(new Animated.Value(8)).current;
+  const currentPlayer = game.players.find((player) => player.id === game.currentPlayerId);
+  const modifierKey = game.activeModifier?.id ?? "none";
+  const suitKey = game.chosenSuit ?? "none";
+
+  useEffect(() => {
+    if (game.status !== "playing") {
+      setCue(null);
+      return;
+    }
+
+    const isYou = game.currentPlayerId === playerId;
+    const title = isYou ? "Your Turn" : `${currentPlayer?.name ?? "Player"}'s Turn`;
+    let subtitle = game.message || "Watch the table.";
+    if (game.activeModifier) {
+      subtitle = `Modifier active: ${modifierShortLabel(game.activeModifier.modifier)}`;
+    }
+    if (game.chosenSuit) {
+      subtitle = `Suit changed to ${suitLabel(game.chosenSuit)}`;
+    }
+    if (game.pendingAction) {
+      subtitle = game.pendingAction.type === "draw"
+        ? `Answer with 2 or take ${game.pendingAction.amount}`
+        : "Answer with 1 or skip";
+    }
+
+    setCue({ key: `${game.currentPlayerId}-${modifierKey}-${suitKey}-${game.message}`, subtitle, title });
+    fade.setValue(0);
+    lift.setValue(8);
+    Animated.parallel([
+      Animated.timing(fade, {
+        duration: 160,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(lift, {
+        duration: 160,
+        toValue: 0,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    const timer = setTimeout(() => {
+      Animated.timing(fade, {
+        duration: 260,
+        toValue: 0,
+        useNativeDriver: true,
+      }).start();
+    }, isYou ? 2200 : 1700);
+    return () => clearTimeout(timer);
+  }, [
+    currentPlayer?.name,
+    fade,
+    game.activeModifier,
+    game.currentPlayerId,
+    game.message,
+    game.pendingAction,
+    game.status,
+    game.chosenSuit,
+    lift,
+    modifierKey,
+    playerId,
+    suitKey,
+  ]);
+
+  if (!cue) {
+    return null;
+  }
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.gameplayCue,
+        { opacity: fade, transform: [{ translateY: lift }] },
+      ]}
+    >
+      <Text style={styles.gameplayCueTitle}>{cue.title}</Text>
+      <Text style={styles.gameplayCueSubtitle} numberOfLines={2}>{cue.subtitle}</Text>
+    </Animated.View>
   );
 }
 
@@ -1628,7 +1786,7 @@ function AnimationLayer({
 
     progress.value = 0;
     progress.value = withTiming(1, {
-      duration: activeAnimation.type === "play" ? 440 : 360,
+      duration: activeAnimation.type === "play" ? 560 : 460,
       easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
     }, (finished) => {
       if (finished) {
@@ -1748,7 +1906,7 @@ function DealCardFlight({
   useEffect(() => {
     progress.value = 0;
     progress.value = withDelay(piece.delay, withTiming(1, {
-      duration: 260,
+      duration: 320,
       easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
     }));
   }, [piece.delay, progress]);
@@ -2829,15 +2987,21 @@ const styles = StyleSheet.create({
   },
   roomChatMessage: {
     color: "rgba(255, 244, 214, 0.8)",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "700",
+    lineHeight: 18,
   },
   roomChatHistory: {
-    maxHeight: 132,
+    backgroundColor: "rgba(0,0,0,0.18)",
+    borderRadius: 12,
+    height: 176,
+    maxHeight: 176,
   },
   roomChatMessages: {
     gap: 5,
     justifyContent: "flex-end",
+    minHeight: 176,
+    padding: 10,
   },
   roomChatPanel: {
     backgroundColor: "rgba(8, 11, 22, 0.42)",
@@ -2846,6 +3010,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 8,
     padding: 10,
+    width: "100%",
   },
   roomChatSend: {
     alignItems: "center",
@@ -3007,15 +3172,17 @@ const styles = StyleSheet.create({
   },
   button: {
     alignItems: "center",
-    backgroundColor: "#171b1f",
-    borderRadius: 8,
+    backgroundColor: "rgba(74, 43, 102, 0.88)",
+    borderColor: "rgba(243, 213, 138, 0.72)",
+    borderRadius: 18,
+    borderWidth: 1,
     justifyContent: "center",
     minHeight: 46,
     minWidth: 88,
     paddingHorizontal: 14,
   },
   secondaryButton: {
-    backgroundColor: "#ece7dd",
+    backgroundColor: "rgba(8, 11, 22, 0.82)",
   },
   dangerButton: {
     backgroundColor: "#b42318",
@@ -3029,7 +3196,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   secondaryButtonText: {
-    color: "#171b1f",
+    color: gameTheme.colors.cream,
   },
   error: {
     color: "#ff6b5f",
@@ -3215,9 +3382,83 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   authPanel: {
-    gap: 10,
-    maxWidth: 340,
+    backgroundColor: "rgba(8, 11, 22, 0.78)",
+    borderColor: "rgba(243, 213, 138, 0.42)",
+    borderRadius: 24,
+    borderWidth: 1,
+    gap: 12,
+    maxWidth: 360,
+    padding: 16,
     width: "100%",
+  },
+  authError: {
+    color: "#ffb4aa",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: -4,
+    textAlign: "center",
+  },
+  authInput: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(243, 213, 138, 0.34)",
+    borderRadius: 16,
+    borderWidth: 1,
+    color: gameTheme.colors.cream,
+    fontSize: 15,
+    fontWeight: "800",
+    minHeight: 52,
+    paddingHorizontal: 14,
+  },
+  authInputError: {
+    borderColor: "#ff8a7e",
+  },
+  authShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(8, 11, 22, 0.48)",
+  },
+  authSubtitle: {
+    color: "rgba(255, 244, 214, 0.8)",
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: -18,
+    textAlign: "center",
+  },
+  authTab: {
+    alignItems: "center",
+    borderRadius: 16,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 42,
+  },
+  authTabActive: {
+    backgroundColor: "rgba(216, 168, 79, 0.24)",
+    borderColor: "rgba(243, 213, 138, 0.62)",
+    borderWidth: 1,
+  },
+  authTabs: {
+    backgroundColor: "rgba(0,0,0,0.22)",
+    borderRadius: 18,
+    flexDirection: "row",
+    gap: 6,
+    padding: 4,
+  },
+  authTabText: {
+    color: "rgba(255, 244, 214, 0.68)",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  authTabTextActive: {
+    color: gameTheme.colors.goldLight,
+  },
+  authTitle: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 52,
+    fontWeight: "900",
+    letterSpacing: 0,
+    textAlign: "center",
+    textShadowColor: "rgba(216, 168, 79, 0.58)",
+    textShadowOffset: { height: 2, width: 0 },
+    textShadowRadius: 12,
   },
   mainMenuActions: {
     gap: 12,
@@ -3546,6 +3787,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "900",
   },
+  gameplayCue: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.76)",
+    borderColor: "rgba(243, 213, 138, 0.58)",
+    borderRadius: 18,
+    borderWidth: 1,
+    maxWidth: 310,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    position: "absolute",
+    top: "27%",
+    width: "76%",
+    zIndex: 14,
+  },
+  gameplayCueSubtitle: {
+    color: "rgba(255, 244, 214, 0.82)",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 3,
+    textAlign: "center",
+  },
+  gameplayCueTitle: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 19,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   deckPressable: {
     borderRadius: 8,
   },
@@ -3761,33 +4030,81 @@ const styles = StyleSheet.create({
   },
   endOverlay: {
     alignItems: "center",
-    bottom: 150,
-    left: 0,
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.52)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
     position: "absolute",
-    right: 0,
     zIndex: 24,
   },
   endPanel: {
     alignItems: "center",
-    backgroundColor: "rgba(16, 19, 23, 0.86)",
-    borderColor: "rgba(255,255,255,0.18)",
-    borderRadius: 8,
+    backgroundColor: "rgba(8, 11, 22, 0.9)",
+    borderColor: "rgba(243, 213, 138, 0.62)",
+    borderRadius: 26,
     borderWidth: 1,
-    gap: 7,
-    maxWidth: 330,
-    padding: 14,
-    width: "82%",
+    gap: 12,
+    maxWidth: 360,
+    padding: 18,
+    width: "92%",
   },
   endTitle: {
-    color: "#ffffff",
-    fontSize: 20,
+    color: gameTheme.colors.goldLight,
+    fontSize: 24,
     fontWeight: "900",
     textAlign: "center",
+    textShadowColor: "rgba(216, 168, 79, 0.52)",
+    textShadowOffset: { height: 1, width: 0 },
+    textShadowRadius: 8,
   },
   endResultText: {
-    color: "#eaf1f7",
+    color: "rgba(255, 244, 214, 0.84)",
     fontSize: 13,
     fontWeight: "800",
+    textAlign: "center",
+  },
+  endResultsList: {
+    gap: 7,
+    width: "100%",
+  },
+  endResultRow: {
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(243, 213, 138, 0.22)",
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  endLoserRow: {
+    borderColor: "rgba(255, 107, 95, 0.38)",
+  },
+  endResultNameBlock: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  endResultName: {
+    color: gameTheme.colors.cream,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  endResultRole: {
+    color: "rgba(255, 244, 214, 0.6)",
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  endResultCoins: {
+    color: "rgba(255, 244, 214, 0.58)",
+    fontSize: 15,
+    fontWeight: "900",
+    minWidth: 42,
+    textAlign: "right",
+  },
+  endResultCoinsPositive: {
+    color: "#7dffaf",
   },
   scoreBlock: {
     gap: 8,

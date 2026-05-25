@@ -1183,10 +1183,7 @@ export default function App() {
       setProfileOpen(true);
       return;
     }
-    if (!isDevAccount && wallet.coins < 25) {
-      setError("You need 25 coins to play random.");
-      return;
-    }
+    void loadEconomy();
     if (session && socket?.connected) {
       socket.emit("leaveRoom", session);
     }
@@ -1230,6 +1227,7 @@ export default function App() {
     visibleGameRef.current = null;
     animationQueueRef.current = [];
     setScreen("menu");
+    void loadEconomy();
   }
 
   return (

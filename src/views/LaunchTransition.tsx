@@ -50,7 +50,7 @@ export function LaunchTransition({
 
   return (
     <Animated.View pointerEvents="none" style={[styles.overlay, { opacity }]}>
-      <ImageBackground source={APP_LAUNCH_BACKGROUND} resizeMode="cover" style={styles.background}>
+      <ImageBackground source={APP_LAUNCH_BACKGROUND} resizeMode="stretch" style={styles.background}>
         <View style={styles.shade} />
         <View style={styles.content}>
           <Text style={styles.title}>Take Two</Text>

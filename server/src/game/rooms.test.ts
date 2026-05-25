@@ -117,10 +117,16 @@ test("startGame does not choose an action card as the first middle card", () => 
   const { io } = fakeIo();
   const { room, player } = createRoom(io, "socket-1", "Player 1");
   addPlayerToRoom(room, "socket-2", "Player 2");
+  setRoomRules(io, room.id, player.id, {
+    chooseDrawCards: true,
+    modifierCards: true,
+    skipOwnTurnCard: true,
+  });
 
   startGame(io, room.id, player.id);
 
   assert.ok(room.middleCard);
+  assert.equal(room.middleCard.type, "playing");
   assert.notEqual(room.middleCard.rank, 1);
   assert.notEqual(room.middleCard.rank, 2);
   assert.notEqual(room.middleCard.rank, 7);

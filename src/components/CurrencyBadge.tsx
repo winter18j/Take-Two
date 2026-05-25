@@ -1,4 +1,5 @@
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
 import { gameTheme } from "../theme/gameTheme";
 import { playSound } from "../audio/soundEffects";
 
@@ -15,13 +16,75 @@ type CurrencyBadgeProps = {
 
 export function CurrencyBadge({ amount, kind, onAdd }: CurrencyBadgeProps) {
   const isCoins = kind === "coins";
+  const [displayAmount, setDisplayAmount] = useState(amount);
+  const [delta, setDelta] = useState(0);
+  const flash = useRef(new Animated.Value(0)).current;
+  const didMount = useRef(false);
+  const displayAmountRef = useRef(amount);
+
+  useEffect(() => {
+    if (!didMount.current) {
+      didMount.current = true;
+      displayAmountRef.current = amount;
+      setDisplayAmount(amount);
+      return undefined;
+    }
+
+    const change = amount - displayAmountRef.current;
+    if (change === 0) {
+      return undefined;
+    }
+
+    setDelta(change);
+    flash.setValue(0);
+    Animated.sequence([
+      Animated.timing(flash, {
+        duration: 220,
+        toValue: 1,
+        useNativeDriver: false,
+      }),
+      Animated.delay(800),
+      Animated.timing(flash, {
+        duration: 240,
+        toValue: 0,
+        useNativeDriver: false,
+      }),
+    ]).start(() => setDelta(0));
+
+    const direction = change > 0 ? 1 : -1;
+    const step = Math.max(2, Math.ceil(Math.abs(change) / 36)) * direction;
+    const timer = setInterval(() => {
+      setDisplayAmount((current) => {
+        const next = current + step;
+        if ((direction > 0 && next >= amount) || (direction < 0 && next <= amount)) {
+          clearInterval(timer);
+          displayAmountRef.current = amount;
+          return amount;
+        }
+        displayAmountRef.current = next;
+        return next;
+      });
+    }, 32);
+
+    return () => clearInterval(timer);
+  }, [amount, flash]);
+
+  const valueColor = flash.interpolate({
+    inputRange: [0, 1],
+    outputRange: [gameTheme.colors.cream, delta < 0 ? "#ff6b5f" : "#7dffaf"],
+  });
 
   return (
     <View style={styles.badge}>
       <View style={[styles.icon, isCoins ? styles.coin : styles.gem]}>
         <Image source={currencyIcons[kind]} resizeMode="contain" style={styles.iconImage} />
       </View>
-      <Text style={styles.value}>{amount.toLocaleString()}</Text>
+      <Animated.Text style={[styles.value, { color: valueColor }]}>{displayAmount.toLocaleString()}</Animated.Text>
+      {delta !== 0 ? (
+        <Animated.Text style={[styles.delta, delta < 0 ? styles.deltaNegative : styles.deltaPositive, { opacity: flash }]}>
+          {delta > 0 ? "+" : ""}{delta}
+        </Animated.Text>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         onPress={() => {
@@ -59,7 +122,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     height: 38,
-    overflow: "hidden",
+    overflow: "visible",
     paddingLeft: 5,
   },
   coin: {
@@ -82,11 +145,23 @@ const styles = StyleSheet.create({
     width: 24,
   },
   value: {
-    color: gameTheme.colors.cream,
     fontSize: 15,
     fontWeight: "900",
     minWidth: 54,
     paddingHorizontal: 8,
     textAlign: "center",
+  },
+  delta: {
+    bottom: -14,
+    fontSize: 11,
+    fontWeight: "900",
+    position: "absolute",
+    right: 38,
+  },
+  deltaNegative: {
+    color: "#ff6b5f",
+  },
+  deltaPositive: {
+    color: "#7dffaf",
   },
 });

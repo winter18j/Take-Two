@@ -4,7 +4,7 @@
     "slug": "taketwo",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./resources/AppIcons (1)/appstore.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -19,14 +19,14 @@
     "android": {
       "package": "com.walidsabhi.taketwo",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./resources/AppIcons (1)/playstore.png",
+        "backgroundColor": "#080B16"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./resources/AppIcons (1)/playstore.png"
     },
     "plugins": [
       "expo-audio",

@@ -144,7 +144,7 @@ function clearTimer(room: Room) {
 }
 
 function isActionRank(card: Card) {
-  return card.rank === 1 || card.rank === 2 || card.rank === 7;
+  return card.type !== "playing" || card.rank === 1 || card.rank === 2 || card.rank === 7;
 }
 
 function drawFromDeck(room: Room, count: number) {
