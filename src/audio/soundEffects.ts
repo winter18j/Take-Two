@@ -1,7 +1,7 @@
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import type { AudioPlayer } from "expo-audio";
 
-export type SoundName = "button" | "draw" | "gameEnd" | "lose" | "matchIntro" | "pick" | "play" | "turn" | "win";
+export type SoundName = "button" | "draw" | "gameEnd" | "lose" | "matchIntro" | "modifier" | "pick" | "play" | "timerUrgent" | "turn" | "win";
 export type MusicScene = "game" | "gameFinal" | "gameIntense" | "menu" | "queue" | "rooms";
 
 const soundSources: Record<SoundName, number> = {
@@ -10,8 +10,10 @@ const soundSources: Record<SoundName, number> = {
   gameEnd: require("../../resources/sounds/game-end.wav"),
   lose: require("../../resources/sounds/player-loses.wav"),
   matchIntro: require("../../resources/sounds/hez2_adaptive_music_HQ_CLEAN_LOOP_V4/sfx_players_presentation_hq_riser_v4_Dmin.wav"),
+  modifier: require("../../resources/sounds/modsfx.wav"),
   pick: require("../../resources/sounds/pick-card.wav"),
   play: require("../../resources/sounds/play-card.mp3"),
+  timerUrgent: require("../../resources/sounds/timequicksfx.mp3"),
   turn: require("../../resources/sounds/turn-change.wav"),
   win: require("../../resources/sounds/win.wav"),
 };
@@ -31,8 +33,10 @@ const volumes: Record<SoundName, number> = {
   gameEnd: 0.85,
   lose: 0.85,
   matchIntro: 0.82,
+  modifier: 0.74,
   pick: 0.45,
   play: 0.72,
+  timerUrgent: 0.42,
   turn: 0.38,
   win: 0.88,
 };
@@ -117,9 +121,33 @@ export async function playSound(name: SoundName) {
   try {
     player.pause();
     await player.seekTo(0);
+    player.loop = false;
     player.play();
   } catch {
     // Audio should never block gameplay. A later tap/event can try again.
+  }
+}
+
+export async function playSoundForDuration(name: SoundName, durationMs: number) {
+  await configureAudio();
+
+  const player = getPlayer(name);
+  try {
+    player.pause();
+    await player.seekTo(0);
+    player.loop = true;
+    player.play();
+    setTimeout(() => {
+      try {
+        player.pause();
+        player.loop = false;
+        void player.seekTo(0);
+      } catch {
+        // Timed urgency cues should never block gameplay.
+      }
+    }, durationMs);
+  } catch {
+    // Audio should never block gameplay. A later event can try again.
   }
 }
 

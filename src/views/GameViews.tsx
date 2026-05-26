@@ -28,6 +28,7 @@ import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
   withDelay,
+  withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
@@ -115,11 +116,17 @@ const suitIconCards: Record<Suit, string> = {
 
 const CARD_FACE_RESIZE_METHOD = "resize" as const;
 
-type SoundName = "button" | "draw" | "gameEnd" | "lose" | "matchIntro" | "pick" | "play" | "turn" | "win";
+type SoundName = "button" | "draw" | "gameEnd" | "lose" | "matchIntro" | "modifier" | "pick" | "play" | "timerUrgent" | "turn" | "win";
 
 export function playSoundPlaceholder(name: SoundName) {
   void import("../audio/soundEffects")
     .then(({ playSound }) => playSound(name))
+    .catch(() => undefined);
+}
+
+function playTimedSoundPlaceholder(name: SoundName, durationMs: number) {
+  void import("../audio/soundEffects")
+    .then(({ playSoundForDuration }) => playSoundForDuration(name, durationMs))
     .catch(() => undefined);
 }
 
@@ -522,10 +529,41 @@ export function GameTable({
   const [dealRun, setDealRun] = useState(0);
   const [introRun, setIntroRun] = useState(0);
   const lastDealMiddleRef = useRef<string | null>(null);
+  const lastUrgencyKeyRef = useRef<string | null>(null);
+  const urgencyShake = useSharedValue(0);
+  const urgencyShakeStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: urgencyShake.value }],
+  }));
 
   useEffect(() => {
     setSelectedCardId(null);
   }, [game.currentPlayerId, game.hand.length]);
+
+  useEffect(() => {
+    const visibleSecondsLeft = game.pendingAction ? secondsLeft : turnSecondsLeft;
+    const urgencyKey = `${game.currentPlayerId ?? "none"}-${game.pendingAction?.expiresAt ?? game.turnExpiresAt ?? "none"}`;
+    if (game.status !== "playing" || visibleSecondsLeft !== 3 || lastUrgencyKeyRef.current === urgencyKey) {
+      return;
+    }
+
+    lastUrgencyKeyRef.current = urgencyKey;
+    playTimedSoundPlaceholder("timerUrgent", 3000);
+    urgencyShake.value = withSequence(
+      withTiming(2, { duration: 42 }),
+      withTiming(-2, { duration: 58 }),
+      withTiming(1.4, { duration: 58 }),
+      withTiming(-1.2, { duration: 58 }),
+      withTiming(0, { duration: 70 }),
+    );
+  }, [
+    game.currentPlayerId,
+    game.pendingAction,
+    game.status,
+    game.turnExpiresAt,
+    secondsLeft,
+    turnSecondsLeft,
+    urgencyShake,
+  ]);
 
   useEffect(() => {
     if (game.status === "playing" && game.message === "Game started." && game.middleCard?.id !== lastDealMiddleRef.current) {
@@ -548,6 +586,8 @@ export function GameTable({
     <View ref={tableRef} style={styles.tableScreen} onLayout={handleLayout}>
       <ImageBackground source={TABLE_IMAGE} resizeMode="stretch" style={styles.tableBackground}>
         <View style={styles.tableShade} />
+        <ModifierColorWash modifier={game.activeModifier} />
+        <Reanimated.View style={[styles.tableContentLayer, urgencyShakeStyle]}>
         <Pressable style={styles.tableDeselectLayer} onPress={() => setSelectedCardId(null)} />
         <QuitButtonWithConfirm
           onCancel={() => setQuitOpen(false)}
@@ -673,6 +713,7 @@ export function GameTable({
           onRetry={onRetry}
           playerId={playerId}
         />
+        </Reanimated.View>
       </ImageBackground>
     </View>
   );
@@ -1160,6 +1201,144 @@ function PendingActionOverlay({
       <Text style={styles.pendingActionText}>Skip</Text>
     </Pressable>
   );
+}
+
+function ModifierColorWash({ modifier }: { modifier: Card | null }) {
+  const progress = useSharedValue(0);
+  const lastModifierId = useRef<string | null>(null);
+  const palette = modifierPalette(modifier?.modifier);
+
+  useEffect(() => {
+    if (!modifier || lastModifierId.current === modifier.id) {
+      return;
+    }
+
+    lastModifierId.current = modifier.id;
+    playSoundPlaceholder("modifier");
+    progress.value = 0;
+    progress.value = withTiming(1, {
+      duration: 820,
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+    });
+  }, [modifier, progress]);
+
+  const washStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(progress.value, [0, 0.16, 0.72, 1], [0, 0.46, 0.24, 0]),
+      transform: [
+        { translateY: interpolate(progress.value, [0, 1], [220, -120]) },
+        { scaleY: interpolate(progress.value, [0, 1], [0.72, 1.16]) },
+      ],
+    };
+  });
+  const glowStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(progress.value, [0, 0.22, 0.86, 1], [0, 0.64, 0.2, 0]),
+      transform: [
+        { translateY: interpolate(progress.value, [0, 1], [260, -80]) },
+        { scaleX: interpolate(progress.value, [0, 0.55, 1], [0.82, 1.04, 1.12]) },
+      ],
+    };
+  });
+
+  if (!modifier) {
+    return null;
+  }
+
+  return (
+    <View pointerEvents="none" style={styles.modifierWashLayer}>
+      <Reanimated.View
+        style={[
+          styles.modifierWash,
+          { backgroundColor: palette.wash },
+          washStyle,
+        ]}
+      />
+      <Reanimated.View
+        style={[
+          styles.modifierGlow,
+          { backgroundColor: palette.glow, borderColor: palette.edge },
+          glowStyle,
+        ]}
+      />
+      {Array.from({ length: 5 }).map((_, index) => (
+        <ModifierFlame
+          color={palette.edge}
+          index={index}
+          key={`${modifier.id}-${index}`}
+          progress={progress}
+        />
+      ))}
+    </View>
+  );
+}
+
+function ModifierFlame({
+  color,
+  index,
+  progress,
+}: {
+  color: string;
+  index: number;
+  progress: SharedValue<number>;
+}) {
+  const flameStyle = useAnimatedStyle(() => {
+    const stagger = index * 0.06;
+    const local = Math.max(0, Math.min(1, (progress.value - stagger) / 0.82));
+    return {
+      opacity: interpolate(local, [0, 0.22, 0.88, 1], [0, 0.42, 0.16, 0]),
+      transform: [
+        { translateY: interpolate(local, [0, 1], [240, -100 - index * 18]) },
+        { scaleY: interpolate(local, [0, 0.55, 1], [0.42, 1.15, 0.86]) },
+        { scaleX: interpolate(local, [0, 1], [0.72, 1.06]) },
+      ],
+    };
+  });
+
+  return (
+    <Reanimated.View
+      style={[
+        styles.modifierFlame,
+        {
+          backgroundColor: color,
+          left: `${10 + index * 19}%`,
+        },
+        flameStyle,
+      ]}
+    />
+  );
+}
+
+function modifierPalette(modifier: Card["modifier"]) {
+  const palettes: Record<string, { edge: string; glow: string; wash: string }> = {
+    choose_three: {
+      edge: "rgba(101, 197, 255, 0.52)",
+      glow: "rgba(30, 102, 182, 0.26)",
+      wash: "rgba(35, 111, 190, 0.34)",
+    },
+    draw_half: {
+      edge: "rgba(125, 255, 175, 0.48)",
+      glow: "rgba(31, 107, 74, 0.26)",
+      wash: "rgba(31, 107, 74, 0.32)",
+    },
+    draw_one_half: {
+      edge: "rgba(255, 107, 95, 0.56)",
+      glow: "rgba(190, 40, 30, 0.3)",
+      wash: "rgba(190, 38, 32, 0.38)",
+    },
+    skip_ability: {
+      edge: "rgba(232, 177, 255, 0.5)",
+      glow: "rgba(126, 65, 180, 0.28)",
+      wash: "rgba(118, 60, 170, 0.34)",
+    },
+    timer_five: {
+      edge: "rgba(255, 211, 101, 0.52)",
+      glow: "rgba(216, 168, 79, 0.28)",
+      wash: "rgba(200, 145, 45, 0.34)",
+    },
+  };
+
+  return modifier ? palettes[modifier] ?? palettes.skip_ability : palettes.skip_ability;
 }
 
 function GameplayCue({ game, playerId }: { game: ClientGameState; playerId: string }) {
@@ -3538,6 +3717,39 @@ const styles = StyleSheet.create({
   tableShade: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(10, 14, 18, 0.22)",
+  },
+  modifierWashLayer: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: "hidden",
+    zIndex: 1,
+  },
+  modifierWash: {
+    borderTopLeftRadius: 220,
+    borderTopRightRadius: 220,
+    bottom: -120,
+    height: "115%",
+    left: "-12%",
+    position: "absolute",
+    right: "-12%",
+  },
+  modifierGlow: {
+    borderRadius: 220,
+    borderTopWidth: 1,
+    bottom: -80,
+    height: "48%",
+    left: "-8%",
+    position: "absolute",
+    right: "-8%",
+  },
+  modifierFlame: {
+    borderRadius: 999,
+    bottom: -130,
+    height: "62%",
+    position: "absolute",
+    width: "16%",
+  },
+  tableContentLayer: {
+    ...StyleSheet.absoluteFillObject,
   },
   tableDeselectLayer: {
     ...StyleSheet.absoluteFillObject,
