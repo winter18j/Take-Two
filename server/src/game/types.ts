@@ -88,6 +88,7 @@ export type Room = {
   chatMessages: RoomChatMessage[];
   message: string;
   isMatchmaking?: boolean;
+  isTutorial?: boolean;
   matchmakingEntryFee: number;
   matchmakingTableId: string | null;
   matchmakingTableName: string | null;
@@ -136,6 +137,7 @@ export type ClientGameState = {
   scores: Record<string, number>;
   message: string;
   isMatchmaking: boolean;
+  isTutorial: boolean;
   matchmakingEntryFee: number;
   matchmakingTableId: string | null;
   matchmakingTableName: string | null;

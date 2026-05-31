@@ -164,6 +164,7 @@ export default function App() {
   const activeAnimationRef = useRef<TableAnimation | null>(null);
   const playedCardLayoutRef = useRef<{ cardId: string; point: Point } | null>(null);
   const lastTurnSoundRef = useRef<{ playerId: string | null; roomId: string | null }>({ playerId: null, roomId: null });
+  const pendingFriendInviteRef = useRef<FriendRow | null>(null);
 
   useEffect(() => {
     if (Platform.OS !== "android") {
@@ -585,6 +586,16 @@ export default function App() {
       if (nextSession) {
         setScreen("room");
         setMatchmaking({ queued: false });
+        const invitedFriend = pendingFriendInviteRef.current;
+        if (invitedFriend && supabase) {
+          pendingFriendInviteRef.current = null;
+          void supabase.rpc("send_friend_message", {
+            friend_uuid: invitedFriend.friend_id,
+            message_body: `Join my Take Two room: ${nextSession.roomId}`,
+          }).then(({ error: inviteError }) => {
+            setError(inviteError ? inviteError.message : `Invited ${invitedFriend.username} to room ${nextSession.roomId}.`);
+          });
+        }
       }
       if (!nextSession) {
         void AsyncStorage.removeItem(storedSessionKey);
@@ -630,6 +641,24 @@ export default function App() {
     }
 
     emit("createRoom", { name });
+  }
+
+  function startTutorial() {
+    setError("");
+    setScreen("room");
+    if (!socket?.connected) {
+      const nextSocket = connect();
+      nextSocket.once("connect", () => nextSocket.emit("createTutorialRoom", { name }));
+      return;
+    }
+
+    emit("createTutorialRoom", { name });
+  }
+
+  function inviteFriendToRoom(friend: FriendRow) {
+    pendingFriendInviteRef.current = friend;
+    setError(`Creating a private room for ${friend.username}...`);
+    createRoom();
   }
 
   function openCreateRoom() {
@@ -1356,6 +1385,7 @@ export default function App() {
           onRespondFriendRequest={respondFriendRequest}
           onSendFriendMessage={sendFriendMessage}
           onSendFriendRequest={sendFriendRequest}
+          onInviteFriend={inviteFriendToRoom}
           dailyRewardReady={dailyRewardReady}
           dailyRewardNextClaimAt={dailyRewardNextClaimAt}
           isDevAccount={isDevAccount}
@@ -1364,6 +1394,7 @@ export default function App() {
           onCreateRoom={openCreateRoom}
           onJoinRoom={openJoinRoom}
           onPlayRandom={playRandom}
+          onStartTutorial={startTutorial}
           onOpenProfile={() => setProfileOpen(true)}
           onCloseProfile={() => setProfileOpen(false)}
           name={name}

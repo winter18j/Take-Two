@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import { createClient } from "@supabase/supabase-js";
 import {
   createRoom,
+  createTutorialRoom,
   callAttempt,
   createMatchmakingRoom,
   chooseDrawCard,
@@ -211,6 +212,13 @@ async function persistFinishedMatch(roomId: string) {
   }
 
   persistedMatches.add(room.id);
+  if (room.isTutorial) {
+    const tutorialPlayer = room.players.find((player) => !player.isBot && player.accountId);
+    if (tutorialPlayer?.accountId) {
+      await supabase.rpc("claim_tutorial_reward", { user_uuid: tutorialPlayer.accountId });
+    }
+    return;
+  }
   const ranked = room.roundResults
     .map((id) => room.players.find((player) => player.id === id))
     .filter((player) => Boolean(player?.accountId));
@@ -278,6 +286,16 @@ io.on("connection", (socket) => {
       void updatePresence(socket.data.accountId, "inroom", room);
       socket.emit("session", { roomId: room.id, playerId: player.id });
       socket.emit("roomChatHistory", room.chatMessages);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
+  socket.on("createTutorialRoom", ({ name }: { name: string }) => {
+    try {
+      const { room, player } = createTutorialRoom(io, socket.id, name, socket.data.accountId, socket.data.accountWins);
+      void updatePresence(socket.data.accountId, "ingame", room);
+      socket.emit("session", { roomId: room.id, playerId: player.id });
     } catch (error) {
       handleSocketError(socket.id, error);
     }

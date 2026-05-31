@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addPlayerToRoom, chooseDrawCard, createRoom, drawUntilPlayable, handleDisconnect, playCard, randomizePlayerOrderForRound, resolveTurnTimeout, restartRoom, resumeSession, setRoomRules, skipTurnWithModifier, startGame } from "./rooms.js";
+import { addPlayerToRoom, chooseDrawCard, createRoom, createTutorialRoom, drawUntilPlayable, handleDisconnect, playCard, randomizePlayerOrderForRound, resolveTurnTimeout, restartRoom, resumeSession, setRoomRules, skipTurnWithModifier, startGame } from "./rooms.js";
 import { Card, Room, Suit } from "./types.js";
 
 function fakeIo() {
@@ -438,4 +438,16 @@ test("skip ability modifier can only be used twice by each player", () => {
     () => skipTurnWithModifier(io, room.id, player.id),
     /already used your two skips/,
   );
+});
+
+test("tutorial room starts immediately with one bot and modern rules", () => {
+  const { io } = fakeIo();
+  const { room } = createTutorialRoom(io, "socket-1", "Student");
+
+  assert.equal(room.status, "playing");
+  assert.equal(room.isTutorial, true);
+  assert.equal(room.players.length, 2);
+  assert.equal(room.players[1]?.isBot, true);
+  assert.equal(room.rules.chooseDrawCards, true);
+  assert.equal(room.rules.modifierCards, true);
 });

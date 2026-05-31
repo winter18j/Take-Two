@@ -110,6 +110,7 @@ type MainMenuScreenProps = {
   onCloseProfile: () => void;
   onCreateRoom: () => void;
   onJoinRoom: () => void;
+  onInviteFriend: (friend: FriendRow) => void;
   onLoadFriends: () => void;
   onLoadLeaderboard: (metric: LeaderboardMetric, period: LeaderboardPeriod) => void;
   onOpenProfile: () => void;
@@ -123,6 +124,7 @@ type MainMenuScreenProps = {
   onSignIn: () => void;
   onSignOut: () => void;
   onSignUp: () => void;
+  onStartTutorial: () => void;
   onToggleMusicMute: () => void;
   onToggleSwipeUpToPlay: () => void;
   profileOpen: boolean;
@@ -158,6 +160,7 @@ export function MainMenuScreen({
   onCloseProfile,
   onCreateRoom,
   onJoinRoom,
+  onInviteFriend,
   onLoadFriends,
   onLoadLeaderboard,
   onOpenFriendChat,
@@ -171,6 +174,7 @@ export function MainMenuScreen({
   onSignIn,
   onSignOut,
   onSignUp,
+  onStartTutorial,
   onToggleMusicMute,
   onToggleSwipeUpToPlay,
   onWatchAdPack,
@@ -184,10 +188,16 @@ export function MainMenuScreen({
   user,
   wallet,
 }: MainMenuScreenProps) {
-  const [view, setView] = useState<"customize" | "friends" | "home" | "leaderboard" | "rooms" | "shop">("home");
+  const [view, setView] = useState<"customize" | "friends" | "home" | "leaderboard" | "randomTables" | "rooms" | "shop">("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const queueText = `Elapsed ${matchmaking.seconds ?? 0}s | ETA ${matchmaking.etaSeconds ?? 10}s`;
   const roomButtonsDisabled = matchmaking.queued;
+
+  useEffect(() => {
+    if (matchmaking.queued) {
+      setView("randomTables");
+    }
+  }, [matchmaking.queued]);
 
   return (
     <ImageBackground source={menuBackground} resizeMode="cover" style={styles.background}>
@@ -217,7 +227,7 @@ export function MainMenuScreen({
             showsVerticalScrollIndicator={false}
           >
             {view !== "home" ? (
-              <Pressable onPress={() => setView("home")} style={styles.backPill}>
+              <Pressable disabled={matchmaking.queued} onPress={() => setView("home")} style={[styles.backPill, matchmaking.queued ? styles.backPillDisabled : null]}>
                 <Text style={styles.backPillText}>Back</Text>
               </Pressable>
             ) : null}
@@ -227,22 +237,29 @@ export function MainMenuScreen({
                 <LogoTitle />
                 <HomeActions
                   disabledText={disabledText}
-                  matchmaking={matchmaking}
-                  onCancelMatchmaking={onCancelMatchmaking}
                   onClaimDailyReward={onClaimDailyReward}
                   onCustomize={() => setView("customize")}
-                  onPlayRandom={onPlayRandom}
-                  onSelectTable={onSelectTable}
+                  onOpenRandomTables={() => setView("randomTables")}
                   onRooms={() => setView("rooms")}
                   onShop={() => setView("shop")}
-                  queueText={queueText}
+                  onStartTutorial={onStartTutorial}
                   roomButtonsDisabled={roomButtonsDisabled}
                   dailyRewardReady={dailyRewardReady}
                   dailyRewardNextClaimAt={dailyRewardNextClaimAt}
                   user={user}
-                  selectedTableId={selectedTableId}
                 />
               </>
+            ) : null}
+
+            {view === "randomTables" ? (
+              <RandomTablesView
+                matchmaking={matchmaking}
+                onCancelMatchmaking={onCancelMatchmaking}
+                onPlayRandom={onPlayRandom}
+                onSelectTable={onSelectTable}
+                queueText={queueText}
+                selectedTableId={selectedTableId}
+              />
             ) : null}
 
             {view === "rooms" ? (
@@ -276,6 +293,7 @@ export function MainMenuScreen({
                 friends={friends}
                 onLoadFriends={onLoadFriends}
                 onOpenFriendChat={onOpenFriendChat}
+                onInviteFriend={onInviteFriend}
                 onRespondFriendRequest={onRespondFriendRequest}
                 onSendFriendMessage={onSendFriendMessage}
                 onSendFriendRequest={onSendFriendRequest}
@@ -288,7 +306,7 @@ export function MainMenuScreen({
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
-      <BottomNav currentView={view} onChangeView={setView} />
+      {view !== "randomTables" ? <BottomNav currentView={view} onChangeView={setView} /> : null}
       <SettingsModal
         onClose={() => setSettingsOpen(false)}
         onToggleSwipeUpToPlay={onToggleSwipeUpToPlay}
@@ -440,28 +458,72 @@ function ProfileModal({
 }
 
 function RandomTableCarousel({
-  nextPeek,
-  onNext,
-  onPrevious,
-  table,
+  locked,
+  onComingSoonChange,
+  onSelectTable,
+  selectedTableId,
 }: {
-  nextPeek: Pick<(typeof matchmakingTables)[number], "iconImage" | "name"> | typeof comingSoonTable;
-  onNext?: () => void;
-  onPrevious?: () => void;
-  table: (typeof matchmakingTables)[number];
+  locked: boolean;
+  onComingSoonChange: (comingSoon: boolean) => void;
+  onSelectTable: (tableId: MatchmakingTableId) => void;
+  selectedTableId: MatchmakingTableId;
 }) {
+  const scrollRef = useRef<ScrollView | null>(null);
+  const selectedIndex = Math.max(0, matchmakingTables.findIndex((table) => table.id === selectedTableId));
+  const [visibleIndex, setVisibleIndex] = useState(selectedIndex);
+  const cardStep = 264;
+
+  function scrollToIndex(index: number, animated = true) {
+    const safeIndex = Math.max(0, Math.min(matchmakingTables.length, index));
+    scrollRef.current?.scrollTo({ animated, x: safeIndex * cardStep });
+    setVisibleIndex(safeIndex);
+    onComingSoonChange(safeIndex === matchmakingTables.length);
+    if (safeIndex < matchmakingTables.length) {
+      onSelectTable(matchmakingTables[safeIndex].id);
+    }
+  }
+
   return (
     <View style={styles.tableCarousel}>
-      <Pressable disabled={!onPrevious} onPress={onPrevious} style={[styles.tableArrow, !onPrevious ? styles.tableArrowDisabled : null]}>
-        <Text style={styles.tableArrowText}>‹</Text>
-      </Pressable>
-      <FlippingTableCard table={table} />
-      <View style={styles.tablePeek}>
-        <Image source={nextPeek.iconImage} resizeMode="cover" style={styles.tablePeekImage} />
+      <ScrollView
+        contentContainerStyle={styles.tableScrollContent}
+        decelerationRate="fast"
+        horizontal
+        onContentSizeChange={() => scrollRef.current?.scrollTo({ animated: false, x: visibleIndex * cardStep })}
+        onMomentumScrollEnd={(event) => {
+          const index = Math.round(event.nativeEvent.contentOffset.x / cardStep);
+          scrollToIndex(index, true);
+        }}
+        ref={scrollRef}
+        scrollEnabled={!locked}
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={cardStep}
+      >
+        {matchmakingTables.map((table) => (
+          <View key={table.id} style={styles.tableCardSlot}>
+            <FlippingTableCard table={table} />
+          </View>
+        ))}
+        <View style={styles.tableCardSlot}>
+          <Image source={comingSoonTable.iconImage} resizeMode="cover" style={styles.comingSoonCard} />
+        </View>
+      </ScrollView>
+      <View style={styles.tableCarouselControls}>
+        <Pressable
+          disabled={locked || visibleIndex === 0}
+          onPress={() => scrollToIndex(visibleIndex - 1)}
+          style={[styles.tableArrow, locked || visibleIndex === 0 ? styles.tableArrowDisabled : null]}
+        >
+          <Text style={styles.tableArrowText}>{"<"}</Text>
+        </Pressable>
+        <Pressable
+          disabled={locked || visibleIndex >= matchmakingTables.length}
+          onPress={() => scrollToIndex(visibleIndex + 1)}
+          style={[styles.tableArrow, locked || visibleIndex >= matchmakingTables.length ? styles.tableArrowDisabled : null]}
+        >
+          <Text style={styles.tableArrowText}>{">"}</Text>
+        </Pressable>
       </View>
-      <Pressable disabled={!onNext} onPress={onNext} style={[styles.tableArrow, !onNext ? styles.tableArrowDisabled : null]}>
-        <Text style={styles.tableArrowText}>›</Text>
-      </Pressable>
     </View>
   );
 }
@@ -563,59 +625,37 @@ function BottomNav({
 function HomeActions({
   dailyRewardNextClaimAt,
   dailyRewardReady,
-  matchmaking,
-  onCancelMatchmaking,
   onClaimDailyReward,
   onCustomize,
-  onPlayRandom,
-  onSelectTable,
+  onOpenRandomTables,
   onRooms,
   onShop,
-  queueText,
+  onStartTutorial,
   roomButtonsDisabled,
   user,
-  selectedTableId,
 }: {
   dailyRewardNextClaimAt: string | null;
   dailyRewardReady: boolean;
   disabledText: string;
-  matchmaking: MatchmakingState;
-  onCancelMatchmaking: () => void;
   onClaimDailyReward: () => void;
   onCustomize: () => void;
-  onPlayRandom: () => void;
-  onSelectTable: (tableId: MatchmakingTableId) => void;
+  onOpenRandomTables: () => void;
   onRooms: () => void;
   onShop: () => void;
-  queueText: string;
+  onStartTutorial: () => void;
   roomButtonsDisabled: boolean;
   user: User | null;
-  selectedTableId: MatchmakingTableId;
 }) {
-  const selectedIndex = matchmakingTables.findIndex((tableConfig) => tableConfig.id === selectedTableId);
-  const safeIndex = selectedIndex >= 0 ? selectedIndex : 0;
-  const selectedTable = matchmakingTables[safeIndex];
-  const nextPeek = safeIndex >= matchmakingTables.length - 1 ? comingSoonTable : matchmakingTables[safeIndex + 1];
-  const previousTable = matchmakingTables[safeIndex - 1] ?? null;
-  const nextTable = matchmakingTables[safeIndex + 1] ?? null;
-
   return (
     <>
-      <RandomTableCarousel
-        nextPeek={nextPeek}
-        onNext={nextTable ? () => onSelectTable(nextTable.id) : undefined}
-        onPrevious={previousTable ? () => onSelectTable(previousTable.id) : undefined}
-        table={selectedTable}
-      />
       <View style={styles.actions}>
         <MenuButton
           disabled={!user}
           iconSource={menuIcons.playRandom}
-          label={matchmaking.queued ? `Finding Match ${matchmaking.seconds ?? 0}s` : "Play Random"}
-          onPress={matchmaking.queued ? onCancelMatchmaking : onPlayRandom}
-          subtitle={user ? `${selectedTable.entryFee.toLocaleString()} entry | Win ${payoutForPlacement(selectedTable.entryFee, 2, 0).toLocaleString()}` : "Sign in to unlock"}
+          label="Play Random"
+          onPress={onOpenRandomTables}
+          subtitle={user ? "Choose your table" : "Sign in to unlock"}
         />
-        {matchmaking.queued ? <Text style={styles.notice}>{queueText}</Text> : null}
         <MenuButton
           disabled={roomButtonsDisabled}
           iconSource={menuIcons.rooms}
@@ -628,6 +668,7 @@ function HomeActions({
           <MenuButton iconSource={menuIcons.customize} label="Customize" onPress={onCustomize} size="small" variant="secondary" />
           <MenuButton iconSource={menuIcons.shop} label="Shop" onPress={onShop} size="small" variant="secondary" />
         </View>
+        <MenuButton label="Learn To Play" onPress={onStartTutorial} size="small" variant="secondary" />
       </View>
       <View style={styles.rewardStrip}>
         <View style={styles.rewardIcon}>
@@ -644,6 +685,45 @@ function HomeActions({
         </Pressable>
       </View>
     </>
+  );
+}
+
+function RandomTablesView({
+  matchmaking,
+  onCancelMatchmaking,
+  onPlayRandom,
+  onSelectTable,
+  queueText,
+  selectedTableId,
+}: {
+  matchmaking: MatchmakingState;
+  onCancelMatchmaking: () => void;
+  onPlayRandom: () => void;
+  onSelectTable: (tableId: MatchmakingTableId) => void;
+  queueText: string;
+  selectedTableId: MatchmakingTableId;
+}) {
+  const [viewingComingSoon, setViewingComingSoon] = useState(false);
+  const selectedIndex = matchmakingTables.findIndex((tableConfig) => tableConfig.id === selectedTableId);
+  const safeIndex = selectedIndex >= 0 ? selectedIndex : 0;
+  const selectedTable = matchmakingTables[safeIndex];
+  return (
+    <View style={styles.randomTablesView}>
+      <RandomTableCarousel
+        locked={matchmaking.queued}
+        onComingSoonChange={setViewingComingSoon}
+        onSelectTable={onSelectTable}
+        selectedTableId={selectedTableId}
+      />
+      <MenuButton
+        disabled={viewingComingSoon}
+        iconSource={menuIcons.playRandom}
+        label={matchmaking.queued ? "Cancel" : viewingComingSoon ? "Coming Soon" : "Queue Up"}
+        onPress={matchmaking.queued ? onCancelMatchmaking : onPlayRandom}
+        subtitle={matchmaking.queued ? queueText : `${selectedTable.entryFee.toLocaleString()} coins entry`}
+      />
+      {matchmaking.queued ? <Text style={styles.notice}>Table selection is locked while matchmaking.</Text> : null}
+    </View>
   );
 }
 
@@ -746,6 +826,7 @@ function FriendsView({
   friendRequests,
   friends,
   onLoadFriends,
+  onInviteFriend,
   onOpenFriendChat,
   onRespondFriendRequest,
   onSendFriendMessage,
@@ -757,6 +838,7 @@ function FriendsView({
   friendRequests: FriendRequestRow[];
   friends: FriendRow[];
   onLoadFriends: () => void;
+  onInviteFriend: (friend: FriendRow) => void;
   onOpenFriendChat: (friend: FriendRow) => void;
   onRespondFriendRequest: (friendshipId: string, accept: boolean) => void;
   onSendFriendMessage: (body: string) => void;
@@ -832,13 +914,20 @@ function FriendsView({
         <Text style={styles.storeSectionTitle}>Friend List</Text>
         {friends.length === 0 ? <Text style={styles.rewardText}>No friends yet.</Text> : null}
         {friends.map((friend) => (
-          <Pressable key={friend.friend_id} onPress={() => onOpenFriendChat(friend)} style={styles.friendRow}>
+          <View key={friend.friend_id} style={styles.friendRow}>
             <View>
               <Text style={styles.friendName}>{friend.username}</Text>
               <Text style={styles.friendStatus}>{friendStatusLabel(friend)}</Text>
             </View>
-            <Text style={styles.friendChatHint}>Chat</Text>
-          </Pressable>
+            <View style={styles.friendActions}>
+              <Pressable onPress={() => onOpenFriendChat(friend)} style={styles.friendMiniButton}>
+                <Text style={styles.friendMiniText}>Chat</Text>
+              </Pressable>
+              <Pressable onPress={() => onInviteFriend(friend)} style={styles.friendMiniButton}>
+                <Text style={styles.friendMiniText}>Invite</Text>
+              </Pressable>
+            </View>
+          </View>
         ))}
       </MenuCard>
 
@@ -991,6 +1080,9 @@ const styles = StyleSheet.create({
     color: gameTheme.colors.cream,
     fontSize: 13,
     fontWeight: "900",
+  },
+  backPillDisabled: {
+    opacity: 0.34,
   },
   background: {
     flex: 1,
@@ -1472,6 +1564,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.36,
     shadowRadius: 16,
   },
+  tableCardSlot: {
+    height: 286,
+    marginRight: 18,
+    width: 246,
+  },
   tableCardArtwork: {
     flex: 1,
   },
@@ -1496,11 +1593,14 @@ const styles = StyleSheet.create({
     transform: [{ scaleX: -1 }],
   },
   tableCarousel: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 8,
+    gap: 10,
     marginBottom: 4,
     width: "100%",
+  },
+  tableCarouselControls: {
+    flexDirection: "row",
+    gap: 16,
+    justifyContent: "center",
   },
   tableBackContent: {
     alignItems: "center",
@@ -1584,11 +1684,11 @@ const styles = StyleSheet.create({
     borderColor: gameTheme.colors.goldLight,
     borderRadius: 999,
     borderWidth: 1,
-    bottom: 18,
     height: 28,
     justifyContent: "center",
     position: "absolute",
     right: 18,
+    top: 18,
     width: 28,
     zIndex: 4,
   },
@@ -1603,23 +1703,19 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "900",
   },
-  tablePeek: {
-    alignItems: "center",
-    borderColor: "rgba(243, 213, 138, 0.16)",
-    borderRadius: 16,
-    borderWidth: 1,
-    height: 184,
-    justifyContent: "center",
-    marginLeft: -20,
-    overflow: "hidden",
-    width: 42,
+  tableScrollContent: {
+    paddingHorizontal: 54,
   },
-  tablePeekImage: {
-    height: 184,
-    left: 0,
-    position: "absolute",
-    top: 0,
-    width: 132,
+  comingSoonCard: {
+    borderRadius: 22,
+    height: "100%",
+    width: "100%",
+  },
+  randomTablesView: {
+    gap: 16,
+    maxWidth: 390,
+    paddingTop: 8,
+    width: "100%",
   },
   subView: {
     gap: 14,

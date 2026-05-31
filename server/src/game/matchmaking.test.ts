@@ -9,6 +9,7 @@ function entry(socketId: string, hiddenScore: number, joinedAt: number) {
     joinedAt,
     name: socketId,
     socketId,
+    tableId: "street" as const,
   };
 }
 

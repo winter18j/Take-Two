@@ -681,11 +681,13 @@ export function GameTable({
   useEffect(() => {
     if (game.status === "playing" && game.message === "Game started." && game.middleCard?.id !== lastDealMiddleRef.current) {
       lastDealMiddleRef.current = game.middleCard?.id ?? null;
-      setDealRun((run) => run + 1);
       setIntroRun((run) => run + 1);
       playSoundPlaceholder("matchIntro");
+      const delay = game.isMatchmaking ? 2460 : 1540;
+      const timer = setTimeout(() => setDealRun((run) => run + 1), delay);
+      return () => clearTimeout(timer);
     }
-  }, [game.message, game.middleCard?.id, game.status]);
+  }, [game.isMatchmaking, game.message, game.middleCard?.id, game.status]);
 
   function handleLayout(event: LayoutChangeEvent) {
     const { height, width } = event.nativeEvent.layout;
@@ -769,6 +771,7 @@ export function GameTable({
           playerId={playerId}
           pendingForYou={pendingForYou}
         />
+        <StackedPenaltyCue pending={game.pendingAction} />
         <SkipAbilityButton
           enabled={
             game.activeModifier?.modifier === "skip_ability"
@@ -785,6 +788,7 @@ export function GameTable({
         ) : null}
 
         <ActivityLog items={activityLog} />
+        <FloatingActionCue message={game.message} />
 
         <View style={styles.bottomArea}>
           <View style={styles.handHeader}>
@@ -821,7 +825,8 @@ export function GameTable({
           onDone={onAnimationDone}
         />
         <DealAnimationLayer positions={positions} run={dealRun} seats={seats} serverUrl={serverUrl} />
-        <MatchIntroOverlay players={game.players} run={introRun} />
+        <MatchIntroOverlay game={game} run={introRun} />
+        <TutorialCoachOverlay game={game} />
         <SuitChoiceOverlay
           card={pendingSevenCard}
           onChoose={onSevenSuit}
@@ -1106,8 +1111,9 @@ function EndGameOverlay({
   const requester = game.players.find((player) => game.rematchRequests.includes(player.id) && player.id !== playerId);
   const youRequested = game.rematchRequests.includes(playerId);
   const yourPlacement = game.roundResults.indexOf(playerId);
+  const tutorialRewardAvailable = Boolean(game.players.find((player) => player.id === playerId)?.accountId);
   const expectedReward = game.isMatchmaking ? rewardForMatchPlacement(game.matchmakingEntryFee, game.players.length, yourPlacement) : 0;
-  const coinDelta = game.isMatchmaking && yourPlacement >= 0 ? expectedReward - game.matchmakingEntryFee : 0;
+  const coinDelta = game.isTutorial && tutorialRewardAvailable ? 150 : game.isMatchmaking && yourPlacement >= 0 ? expectedReward - game.matchmakingEntryFee : 0;
   const didWin = game.winnerId === playerId;
   const resultTitle = didWin ? "Victory" : game.loserId === playerId ? "Defeat" : "Round Complete";
   const orderedResults = game.roundResults
@@ -1120,7 +1126,7 @@ function EndGameOverlay({
     }
 
     setLeaving(true);
-    if (game.isMatchmaking && coinDelta !== 0) {
+    if ((game.isMatchmaking || game.isTutorial) && coinDelta !== 0) {
       setCoinFlightRun((run) => run + 1);
       setTimeout(callback, 820);
       return;
@@ -1145,7 +1151,7 @@ function EndGameOverlay({
         ) : null}
         <View style={styles.endHero}>
           <Text style={[styles.endKicker, didWin ? styles.endKickerWin : styles.endKickerLose]}>
-            {game.isMatchmaking ? "Random Table" : "Private Room"}
+            {game.isTutorial ? "Training Complete" : game.isMatchmaking ? "Random Table" : "Private Room"}
           </Text>
           <Text style={styles.endTitle}>{resultTitle}</Text>
           <Text style={styles.endResultText}>
@@ -1178,7 +1184,13 @@ function EndGameOverlay({
             );
           })}
         </View>
-        {game.isMatchmaking ? (
+        {game.isTutorial ? (
+          <View style={styles.endEconomyBlock}>
+            <Text style={styles.endEconomyTitle}>Tutorial Reward</Text>
+            <Text style={styles.endCoinDelta}>{tutorialRewardAvailable ? "Up to +150 coins" : "Sign in to claim rewards"}</Text>
+            <Text style={styles.endResultText}>{tutorialRewardAvailable ? "Your first completed lesson earns the tutorial reward." : "You can practice as a guest at any time."}</Text>
+          </View>
+        ) : game.isMatchmaking ? (
           <View style={styles.endEconomyBlock}>
             <Text style={styles.endEconomyTitle}>Coins</Text>
             <Text style={styles.endResultText}>Entry fee: -{game.matchmakingEntryFee}</Text>
@@ -1197,7 +1209,7 @@ function EndGameOverlay({
             </Text>
           </View>
         ) : null}
-        {isOneVsOne ? (
+        {isOneVsOne && !game.isTutorial ? (
           <View style={styles.scoreBlock}>
             {game.players.map((player) => (
               <Text key={player.id} style={styles.scoreText}>
@@ -1214,7 +1226,7 @@ function EndGameOverlay({
           </View>
         ) : null}
         <View style={styles.endActions}>
-          {game.isMatchmaking ? (
+          {game.isTutorial ? null : game.isMatchmaking ? (
             <Button disabled={leaving} label="Queue Again" onPress={() => runExit(onQueueAgain)} />
           ) : (
             <Button disabled={leaving} label="Back to Room" onPress={() => runExit(onBackToRoom)} tone="secondary" />
@@ -1496,7 +1508,7 @@ function ModifierCueOverlay({ modifier }: { modifier: Card | null }) {
     setActiveCue(next);
     progress.value = 0;
     progress.value = withTiming(1, {
-      duration: 1360,
+      duration: 3000,
       easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
     }, (finished) => {
       if (finished) {
@@ -1720,7 +1732,7 @@ function ModifierColorWash({ modifier }: { modifier: Card | null }) {
     playSoundPlaceholder("modifier");
     progress.value = 0;
     progress.value = withTiming(1, {
-      duration: 820,
+      duration: 1250,
       easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
     });
   }, [modifier, progress]);
@@ -2712,9 +2724,12 @@ function DealCardFlight({
   );
 }
 
-function MatchIntroOverlay({ players, run }: { players: Player[]; run: number }) {
+function MatchIntroOverlay({ game, run }: { game: ClientGameState; run: number }) {
   const [visible, setVisible] = useState(false);
   const progress = useRef(new Animated.Value(0)).current;
+  const tableConfig = getMatchmakingTable(game.matchmakingTableId);
+  const prizePool = game.matchmakingEntryFee * game.players.length;
+  const background = game.isMatchmaking ? tableConfig.matchBackground : TABLE_IMAGE;
 
   useEffect(() => {
     if (run <= 0) {
@@ -2729,14 +2744,14 @@ function MatchIntroOverlay({ players, run }: { players: Player[]; run: number })
         toValue: 1,
         useNativeDriver: true,
       }),
-      Animated.delay(980),
+      Animated.delay(game.isMatchmaking ? 1780 : 980),
       Animated.timing(progress, {
         duration: 320,
         toValue: 0,
         useNativeDriver: true,
       }),
     ]).start(() => setVisible(false));
-  }, [progress, run]);
+  }, [game.isMatchmaking, progress, run]);
 
   if (!visible) {
     return null;
@@ -2753,15 +2768,115 @@ function MatchIntroOverlay({ players, run }: { players: Player[]; run: number })
 
   return (
     <Animated.View pointerEvents="none" style={[styles.matchIntroLayer, { opacity: progress }]}>
+      <ImageBackground source={background} resizeMode="cover" style={styles.matchIntroBackground}>
+      <View style={styles.matchIntroShade} />
       <Animated.View style={[styles.matchIntroPanel, { transform: [{ scale }, { translateY }] }]}>
-        {players.map((player, index) => (
+        {game.isMatchmaking ? <Text style={styles.matchIntroTable}>{tableConfig.name}</Text> : null}
+        {game.isMatchmaking ? (
+          <View style={styles.matchIntroStakes}>
+            <Text style={styles.matchIntroStakeText}>Entry {game.matchmakingEntryFee.toLocaleString()}</Text>
+            <Text style={styles.matchIntroStakeText}>Prize Pool {prizePool.toLocaleString()}</Text>
+          </View>
+        ) : null}
+        <View style={styles.matchIntroLineup}>
+        {game.players.map((player, index) => (
           <View key={player.id} style={styles.matchIntroPlayer}>
             <Text style={styles.matchIntroName} numberOfLines={1}>{player.name}</Text>
-            {index < players.length - 1 ? <Text style={styles.matchIntroVs}>VS</Text> : null}
+            {index < game.players.length - 1 ? <Text style={styles.matchIntroVs}>VS</Text> : null}
           </View>
         ))}
+        </View>
+        {game.isMatchmaking ? (
+          <View style={styles.matchIntroCoins}>
+            {Array.from({ length: Math.min(8, game.players.length * 2) }).map((_, index) => (
+              <Animated.Text
+                key={index}
+                style={[
+                  styles.matchIntroCoin,
+                  {
+                    opacity: progress,
+                    transform: [{
+                      translateY: progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [22 + (index % 3) * 7, 0],
+                      }),
+                    }],
+                  },
+                ]}
+              >
+                ●
+              </Animated.Text>
+            ))}
+          </View>
+        ) : null}
       </Animated.View>
+      </ImageBackground>
     </Animated.View>
+  );
+}
+
+function FloatingActionCue({ message }: { message: string }) {
+  const [visibleMessage, setVisibleMessage] = useState("");
+  const fade = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!message || message === "Game started." || message === "Waiting for players.") {
+      return;
+    }
+    setVisibleMessage(message);
+    fade.setValue(0);
+    Animated.sequence([
+      Animated.timing(fade, { duration: 170, toValue: 1, useNativeDriver: true }),
+      Animated.delay(1050),
+      Animated.timing(fade, { duration: 230, toValue: 0, useNativeDriver: true }),
+    ]).start();
+  }, [fade, message]);
+
+  return visibleMessage ? (
+    <Animated.View pointerEvents="none" style={[styles.floatingActionCue, { opacity: fade }]}>
+      <Text numberOfLines={2} style={styles.floatingActionText}>{visibleMessage}</Text>
+    </Animated.View>
+  ) : null;
+}
+
+function StackedPenaltyCue({ pending }: { pending: PendingAction | null }) {
+  if (pending?.type !== "draw") {
+    return null;
+  }
+
+  return (
+    <View pointerEvents="none" style={styles.stackedPenaltyCue}>
+      <Text style={styles.stackedPenaltyLabel}>Draw</Text>
+      <Text style={styles.stackedPenaltyAmount}>{pending.amount}</Text>
+    </View>
+  );
+}
+
+function TutorialCoachOverlay({ game }: { game: ClientGameState }) {
+  const [step, setStep] = useState(0);
+  if (!game.isTutorial || game.status === "finished") {
+    return null;
+  }
+
+  const lessons = [
+    ["Welcome to Take Two", "Match the middle card by suit or number. Your goal is to empty your hand."],
+    ["Drawing", "Tap the deck when you want to draw. Drawing one card ends your turn."],
+    ["Action Card: 1", "Playing a 1 skips the next player unless they answer with another 1."],
+    ["Action Card: 2", "Playing a 2 passes a draw penalty. Another 2 stacks the penalty."],
+    ["Action Card: 7", "Playing a 7 lets you choose the active suit for the next move."],
+    ["Modifiers", "A modifier changes the table rules. You may play one before your normal card."],
+    ["Card Choice", "When drawing, choose carefully between the offered cards before time runs out."],
+  ];
+  const lesson = lessons[Math.min(step, lessons.length - 1)];
+
+  return (
+    <View style={styles.tutorialCoach}>
+      <Text style={styles.tutorialCoachTitle}>{lesson[0]}</Text>
+      <Text style={styles.tutorialCoachText}>{lesson[1]}</Text>
+      <Pressable onPress={() => setStep((current) => Math.min(lessons.length - 1, current + 1))} style={styles.tutorialCoachButton}>
+        <Text style={styles.tutorialCoachButtonText}>{step >= lessons.length - 1 ? "Play" : "Next"}</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -3493,6 +3608,7 @@ export type ClientGameState = {
   scores: Record<string, number>;
   message: string;
   isMatchmaking: boolean;
+  isTutorial: boolean;
   matchmakingEntryFee: number;
   matchmakingTableId: string | null;
   matchmakingTableName: string | null;
@@ -4593,7 +4709,7 @@ const styles = StyleSheet.create({
   },
   activeTurnPulseGlow: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(243, 213, 138, 0.22)",
+    backgroundColor: "rgba(243, 213, 138, 0.32)",
     borderRadius: 18,
     left: -8,
     right: -8,
@@ -4998,6 +5114,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 23,
   },
+  matchIntroBackground: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  matchIntroShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.66)",
+  },
   matchIntroPanel: {
     alignItems: "center",
     backgroundColor: "rgba(16, 19, 23, 0.88)",
@@ -5009,6 +5134,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     width: "84%",
+  },
+  matchIntroTable: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 31,
+    fontWeight: "900",
+    textShadowColor: "rgba(216, 168, 79, 0.58)",
+    textShadowOffset: { height: 2, width: 0 },
+    textShadowRadius: 10,
+  },
+  matchIntroStakes: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  matchIntroStakeText: {
+    color: "#7dffaf",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  matchIntroLineup: {
+    alignItems: "center",
+    marginTop: 3,
+    width: "100%",
+  },
+  matchIntroCoins: {
+    flexDirection: "row",
+    gap: 5,
+    marginTop: 3,
+  },
+  matchIntroCoin: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 15,
+    textShadowColor: gameTheme.colors.gold,
+    textShadowOffset: { height: 0, width: 0 },
+    textShadowRadius: 8,
   },
   matchIntroPlayer: {
     alignItems: "center",
@@ -5025,6 +5184,92 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
     marginTop: 6,
+  },
+  floatingActionCue: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.84)",
+    borderColor: "rgba(243, 213, 138, 0.62)",
+    borderRadius: 16,
+    borderWidth: 1,
+    maxWidth: 300,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    position: "absolute",
+    top: "54%",
+    width: "76%",
+    zIndex: 15,
+  },
+  floatingActionText: {
+    color: gameTheme.colors.cream,
+    fontSize: 13,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  stackedPenaltyCue: {
+    alignItems: "center",
+    alignSelf: "center",
+    backgroundColor: "rgba(143, 38, 51, 0.9)",
+    borderColor: "#ffcd5f",
+    borderRadius: 999,
+    borderWidth: 2,
+    height: 74,
+    justifyContent: "center",
+    position: "absolute",
+    top: "45%",
+    width: 74,
+    zIndex: 14,
+  },
+  stackedPenaltyLabel: {
+    color: "#fff4d6",
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  stackedPenaltyAmount: {
+    color: "#ffcd5f",
+    fontSize: 30,
+    fontWeight: "900",
+    lineHeight: 32,
+  },
+  tutorialCoach: {
+    backgroundColor: "rgba(8, 11, 22, 0.94)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 18,
+    borderWidth: 1,
+    bottom: 198,
+    left: 18,
+    padding: 13,
+    position: "absolute",
+    right: 18,
+    zIndex: 21,
+  },
+  tutorialCoachTitle: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  tutorialCoachText: {
+    color: gameTheme.colors.cream,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  tutorialCoachButton: {
+    alignSelf: "flex-end",
+    backgroundColor: "rgba(216, 168, 79, 0.24)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 9,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  tutorialCoachButtonText: {
+    color: gameTheme.colors.cream,
+    fontSize: 12,
+    fontWeight: "900",
   },
   endOverlay: {
     alignItems: "center",

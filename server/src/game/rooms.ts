@@ -132,6 +132,7 @@ function toClientState(room: Room, player: Player): ClientGameState {
     scores: room.scores,
     message: room.message,
     isMatchmaking: Boolean(room.isMatchmaking),
+    isTutorial: Boolean(room.isTutorial),
     matchmakingEntryFee: room.matchmakingEntryFee,
     matchmakingTableId: room.matchmakingTableId,
     matchmakingTableName: room.matchmakingTableName,
@@ -621,6 +622,7 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
     chatMessages: [],
     message: "Waiting for players.",
     isMatchmaking: false,
+    isTutorial: false,
     matchmakingEntryFee: defaultMatchmakingTable.entryFee,
     matchmakingTableId: null,
     matchmakingTableName: null,
@@ -798,6 +800,17 @@ export function createMatchmakingRoom(
   startRound(io, room, { randomizePlayers: true });
   maybeRunBotTurn(io, room);
   return { room, players };
+}
+
+export function createTutorialRoom(io: Server, socketId: string, name: string, accountId?: string, accountWins?: number) {
+  const { room, player } = createRoom(io, socketId, name, accountId, accountWins);
+  addBotToRoom(room);
+  room.isTutorial = true;
+  room.rules = { ...matchmakingRules };
+  room.message = "Tutorial started.";
+  startRound(io, room, { randomizePlayers: false });
+  maybeRunBotTurn(io, room);
+  return { room, player };
 }
 
 export function startGame(io: Server, roomId: string, playerId: string) {
