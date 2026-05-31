@@ -1,5 +1,5 @@
 import { User } from "@supabase/supabase-js";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Animated,
@@ -17,7 +17,9 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { PanGestureHandler, State } from "react-native-gesture-handler";
 import { MenuButton } from "../components/MenuButton";
+import { getMatchmakingTable } from "../gameTables";
 import { gameTheme } from "../theme/gameTheme";
 import { CardImageEngine } from "./rendering/CardImageEngine";
 import type { SharedValue } from "react-native-reanimated";
@@ -27,6 +29,7 @@ import Reanimated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
   withDelay,
   withSequence,
   withSpring,
@@ -35,12 +38,6 @@ import Reanimated, {
 
 export const RESPONSE_WINDOW_SECONDS = 10;
 export const TURN_WINDOW_SECONDS = 15;
-const MATCH_ENTRY_COST = 25;
-const MATCH_REWARD_TABLE: Record<number, number[]> = {
-  2: [40, 0],
-  3: [45, 20, 10],
-  4: [55, 30, 15, 0],
-};
 const CARD_WIDTH = 92;
 const CARD_HEIGHT = 138;
 const HAND_ROW_LIMIT = 5;
@@ -59,6 +56,81 @@ const TABLE_IMAGE = require("../../resources/backgrounds/game-background.png");
 const AUTH_BACKGROUND_IMAGE = require("../../resources/backgrounds/menu-main.png");
 const ROOM_MENU_IMAGE = require("../../resources/backgrounds/menu-rooms.png");
 const CARD_BACK_IMAGE = require("../../resources/cards-opti/cardback.webp");
+export type ModifierCueType = "timer5" | "draw15" | "draw05" | "skipAbility" | "choose3";
+type ModifierCueRequest = { id: string; type: ModifierCueType };
+const modifierCueSubscribers = new Set<(request: ModifierCueRequest) => void>();
+let modifierCueRun = 0;
+export function showModifierCue(type: ModifierCueType) {
+  modifierCueRun += 1;
+  const request = { id: `${type}-${Date.now()}-${modifierCueRun}`, type };
+  modifierCueSubscribers.forEach((subscriber) => subscriber(request));
+}
+
+const modifierCueIcons: Record<ModifierCueType, number> = {
+  choose3: require("../../resources/modifier_cues/choose3/frame_1.png"),
+  draw05: require("../../resources/modifier_cues/draw05/frame_1.png"),
+  draw15: require("../../resources/modifier_cues/draw15/frame_1.png"),
+  skipAbility: require("../../resources/modifier_cues/skip_ability/frame_1.png"),
+  timer5: require("../../resources/modifier_cues/timer5/frame_1.png"),
+};
+const modifierCueConfigs: Record<
+  ModifierCueType,
+  {
+    accent: string;
+    burst: string;
+    glow: string;
+    icon: number;
+    shadow: string;
+    subtitle: string;
+    title: string;
+  }
+> = {
+  choose3: {
+    accent: "#62e6da",
+    burst: "rgba(98, 230, 218, 0.44)",
+    glow: "rgba(35, 196, 182, 0.28)",
+    icon: modifierCueIcons.choose3,
+    shadow: "rgba(11, 62, 76, 0.92)",
+    subtitle: "Choose from 3 draw cards",
+    title: "Choose 3",
+  },
+  draw05: {
+    accent: "#7fc7ff",
+    burst: "rgba(127, 199, 255, 0.42)",
+    glow: "rgba(39, 104, 190, 0.28)",
+    icon: modifierCueIcons.draw05,
+    shadow: "rgba(10, 38, 82, 0.92)",
+    subtitle: "Draw penalties reduced",
+    title: "x0.5 Draw",
+  },
+  draw15: {
+    accent: "#ff7568",
+    burst: "rgba(255, 82, 66, 0.46)",
+    glow: "rgba(190, 38, 32, 0.34)",
+    icon: modifierCueIcons.draw15,
+    shadow: "rgba(86, 14, 18, 0.94)",
+    subtitle: "Draw penalties increased",
+    title: "x1.5 Draw",
+  },
+  skipAbility: {
+    accent: "#d59cff",
+    burst: "rgba(213, 156, 255, 0.42)",
+    glow: "rgba(132, 68, 190, 0.32)",
+    icon: modifierCueIcons.skipAbility,
+    shadow: "rgba(54, 25, 82, 0.94)",
+    subtitle: "Skip ability activated",
+    title: "Skip+",
+  },
+  timer5: {
+    accent: "#ffcd5f",
+    burst: "rgba(255, 190, 64, 0.48)",
+    glow: "rgba(204, 88, 34, 0.34)",
+    icon: modifierCueIcons.timer5,
+    shadow: "rgba(86, 34, 14, 0.94)",
+    subtitle: "Turns now last 5 seconds",
+    title: "5s Timer",
+  },
+};
 const cardImages: Record<string, number> = {
   "bastos-1": require("../../resources/cards-opti/bastos-1.webp"),
   "bastos-2": require("../../resources/cards-opti/bastos-2.webp"),
@@ -293,6 +365,7 @@ function RoomChatPanel({
       </ScrollView>
       <View style={styles.roomChatComposer}>
         <TextInput
+          maxLength={300}
           onChangeText={setBody}
           placeholder="Say something"
           placeholderTextColor="rgba(255, 244, 214, 0.52)"
@@ -327,27 +400,64 @@ function RoomRulesPanel({
     <View style={styles.roomRulesPanel}>
       <Text style={styles.roomChatTitle}>Rules</Text>
       <RuleToggle
+        active={rules.assistedPlay}
+        label="Card help"
+        onPress={() => onChange({ assistedPlay: !rules.assistedPlay })}
+      />
+      <RuleToggle
         active={rules.chooseDrawCards}
+        disabled={rules.manualCall}
         label="Choose draw"
         onPress={() => onChange({ chooseDrawCards: !rules.chooseDrawCards })}
       />
       <RuleToggle
         active={rules.modifierCards}
+        disabled={rules.manualCall}
         label="Modifiers"
         onPress={() => onChange({ modifierCards: !rules.modifierCards })}
       />
       <RuleToggle
         active={rules.skipOwnTurnCard}
+        disabled={rules.manualCall}
         label="Skip card"
         onPress={() => onChange({ skipOwnTurnCard: !rules.skipOwnTurnCard })}
+      />
+      <RuleToggle
+        active={rules.manualCall}
+        label="Manual call"
+        onPress={() => onChange({
+          assistedPlay: rules.manualCall,
+          chooseDrawCards: false,
+          manualCall: !rules.manualCall,
+          modifierCards: false,
+          skipOwnTurnCard: false,
+        })}
       />
     </View>
   );
 }
 
-function RuleToggle({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) {
+function RuleToggle({
+  active,
+  disabled,
+  label,
+  onPress,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  label: string;
+  onPress: () => void;
+}) {
   return (
-    <Pressable onPress={onPress} style={[styles.ruleToggle, active ? styles.ruleToggleActive : null]}>
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.ruleToggle,
+        active ? styles.ruleToggleActive : null,
+        disabled ? styles.ruleToggleDisabled : null,
+      ]}
+    >
       <Text style={[styles.ruleToggleText, active ? styles.ruleToggleTextActive : null]}>{label}</Text>
     </Pressable>
   );
@@ -498,6 +608,7 @@ export function GameTable({
   onAdClosed,
   onAdReward,
   onBackToRoom,
+  onCallAttempt,
   onMainMenu,
   onQueueAgain,
   onSkipTurnWithModifier,
@@ -508,6 +619,7 @@ export function GameTable({
   playerId,
   secondsLeft,
   serverUrl,
+  swipeUpToPlay,
   tableLabel,
   timerProgress,
   turnProgress,
@@ -515,6 +627,7 @@ export function GameTable({
   confettiRun,
 }: GameTableProps) {
   const tableRef = useRef<View | null>(null);
+  const tableImage = game.isMatchmaking ? getMatchmakingTable(game.matchmakingTableId).matchBackground : TABLE_IMAGE;
   const [tableSize, setTableSize] = useState({ height: 1, width: 1 });
   const [tableOrigin, setTableOrigin] = useState<Point>({ x: 0, y: 0 });
   const seats = useMemo(
@@ -584,9 +697,10 @@ export function GameTable({
 
   return (
     <View ref={tableRef} style={styles.tableScreen} onLayout={handleLayout}>
-      <ImageBackground source={TABLE_IMAGE} resizeMode="stretch" style={styles.tableBackground}>
+      <ImageBackground source={tableImage} resizeMode="stretch" style={styles.tableBackground}>
         <View style={styles.tableShade} />
         <ModifierColorWash modifier={game.activeModifier} />
+        <ModifierCueOverlay modifier={game.activeModifier} />
         <Reanimated.View style={[styles.tableContentLayer, urgencyShakeStyle]}>
         <Pressable style={styles.tableDeselectLayer} onPress={() => setSelectedCardId(null)} />
         <QuitButtonWithConfirm
@@ -641,7 +755,8 @@ export function GameTable({
           ) : null}
         </View>
 
-        <GameplayCue game={game} playerId={playerId} />
+        <TurnClarityCue game={game} playerId={playerId} />
+        <ActiveModifierBar modifier={game.activeModifier} />
 
         <View style={styles.centerPile}>
           <StaticCardFace card={game.middleCard} large />
@@ -655,9 +770,19 @@ export function GameTable({
           pendingForYou={pendingForYou}
         />
         <SkipAbilityButton
-          enabled={game.activeModifier?.modifier === "skip_ability" && game.currentPlayerId === playerId}
+          enabled={
+            game.activeModifier?.modifier === "skip_ability"
+            && game.currentPlayerId === playerId
+            && game.skipAbilityUsesRemaining > 0
+          }
           onPress={onSkipTurnWithModifier}
+          remaining={game.skipAbilityUsesRemaining}
         />
+        {game.rules.manualCall && game.lastPlayAttempt && game.lastPlayAttempt.playerId !== playerId ? (
+          <Pressable onPress={onCallAttempt} style={styles.callAttemptButton}>
+            <Text style={styles.callAttemptText}>Call Attempt</Text>
+          </Pressable>
+        ) : null}
 
         <ActivityLog items={activityLog} />
 
@@ -671,18 +796,21 @@ export function GameTable({
             </View>
           </View>
 
-          <PlayerHand
-            activeAnimation={activeAnimation}
-            cards={game.hand}
-            game={game}
-            onPlayCard={onPlayCard}
-            playerId={playerId}
-            selectedCardId={selectedCardId}
-            serverUrl={serverUrl}
-            setSelectedCardId={setSelectedCardId}
-            tableOrigin={tableOrigin}
-            tableWidth={tableSize.width}
-          />
+          <ActiveTurnPulse active={isYourTurn && game.status === "playing"} intensity="strong">
+            <PlayerHand
+              activeAnimation={activeAnimation}
+              cards={game.hand}
+              game={game}
+              onPlayCard={onPlayCard}
+              playerId={playerId}
+              selectedCardId={selectedCardId}
+              serverUrl={serverUrl}
+              setSelectedCardId={setSelectedCardId}
+              swipeUpToPlay={swipeUpToPlay}
+              tableOrigin={tableOrigin}
+              tableWidth={tableSize.width}
+            />
+          </ActiveTurnPulse>
         </View>
 
         <AnimationLayer
@@ -707,6 +835,7 @@ export function GameTable({
           onAdClosed={onAdClosed}
           onAdReward={onAdReward}
           onBackToRoom={onBackToRoom}
+          onCallAttempt={onCallAttempt}
           onMainMenu={onMainMenu}
           onQueueAgain={onQueueAgain}
           onShowInterstitialAd={onShowInterstitialAd}
@@ -957,12 +1086,15 @@ function EndGameOverlay({
   onAdClosed: () => void;
   onAdReward: (currency: "coins" | "gems") => void;
   onBackToRoom: () => void;
+  onCallAttempt: () => void;
   onMainMenu: () => void;
   onQueueAgain: () => void;
   onShowInterstitialAd: () => void;
   onRetry: () => void;
   playerId: string;
 }) {
+  const [coinFlightRun, setCoinFlightRun] = useState(0);
+  const [leaving, setLeaving] = useState(false);
   if (game.status !== "finished") {
     return null;
   }
@@ -974,16 +1106,32 @@ function EndGameOverlay({
   const requester = game.players.find((player) => game.rematchRequests.includes(player.id) && player.id !== playerId);
   const youRequested = game.rematchRequests.includes(playerId);
   const yourPlacement = game.roundResults.indexOf(playerId);
-  const expectedReward =
-    game.isMatchmaking && yourPlacement >= 0
-      ? MATCH_REWARD_TABLE[game.players.length]?.[yourPlacement] ?? 0
-      : 0;
+  const expectedReward = game.isMatchmaking ? rewardForMatchPlacement(game.matchmakingEntryFee, game.players.length, yourPlacement) : 0;
+  const coinDelta = game.isMatchmaking && yourPlacement >= 0 ? expectedReward - game.matchmakingEntryFee : 0;
+  const didWin = game.winnerId === playerId;
+  const resultTitle = didWin ? "Victory" : game.loserId === playerId ? "Defeat" : "Round Complete";
   const orderedResults = game.roundResults
     .map((id) => game.players.find((player) => player.id === id))
     .filter((player): player is Player => Boolean(player));
 
+  function runExit(callback: () => void) {
+    if (leaving) {
+      return;
+    }
+
+    setLeaving(true);
+    if (game.isMatchmaking && coinDelta !== 0) {
+      setCoinFlightRun((run) => run + 1);
+      setTimeout(callback, 820);
+      return;
+    }
+
+    setTimeout(callback, 140);
+  }
+
   return (
     <View style={styles.endOverlay}>
+      <CoinFlight run={coinFlightRun} positive={coinDelta >= 0} />
       <View style={styles.endPanel}>
         {adDue ? (
           <View style={styles.adPlaceholder}>
@@ -995,14 +1143,19 @@ function EndGameOverlay({
             </View>
           </View>
         ) : null}
-        <Text style={styles.endTitle}>
-          {loser ? "Match Results" : "Round Finished"}
-        </Text>
+        <View style={styles.endHero}>
+          <Text style={[styles.endKicker, didWin ? styles.endKickerWin : styles.endKickerLose]}>
+            {game.isMatchmaking ? "Random Table" : "Private Room"}
+          </Text>
+          <Text style={styles.endTitle}>{resultTitle}</Text>
+          <Text style={styles.endResultText}>
+            {loser ? `${loser.name} is the final loser.` : "Round finished."}
+          </Text>
+        </View>
         <View style={styles.endResultsList}>
           {orderedResults.map((player, index) => {
-            const reward = game.isMatchmaking
-              ? MATCH_REWARD_TABLE[game.players.length]?.[index] ?? 0
-              : 0;
+            const reward = game.isMatchmaking ? rewardForMatchPlacement(game.matchmakingEntryFee, game.players.length, index) : 0;
+            const net = game.isMatchmaking ? reward - game.matchmakingEntryFee : 0;
             const isLoser = player.id === game.loserId || index === orderedResults.length - 1;
             return (
               <View key={player.id} style={[styles.endResultRow, isLoser ? styles.endLoserRow : null]}>
@@ -1012,20 +1165,35 @@ function EndGameOverlay({
                   </Text>
                   <Text style={styles.endResultRole}>{isLoser ? "Final loser" : "Secured place"}</Text>
                 </View>
-                <Text style={[styles.endResultCoins, reward > 0 ? styles.endResultCoinsPositive : null]}>
-                  {game.isMatchmaking ? `+${reward}` : "-"}
+                <Text
+                  style={[
+                    styles.endResultCoins,
+                    net > 0 ? styles.endResultCoinsPositive : null,
+                    net < 0 ? styles.endResultCoinsNegative : null,
+                  ]}
+                >
+                  {game.isMatchmaking ? `${net >= 0 ? "+" : ""}${net}` : "-"}
                 </Text>
               </View>
             );
           })}
         </View>
         {game.isMatchmaking ? (
-          <View style={styles.scoreBlock}>
-            <Text style={styles.endResultText}>Entry: -{MATCH_ENTRY_COST} coins</Text>
+          <View style={styles.endEconomyBlock}>
+            <Text style={styles.endEconomyTitle}>Coins</Text>
+            <Text style={styles.endResultText}>Entry fee: -{game.matchmakingEntryFee}</Text>
             <Text style={styles.endResultText}>
               {expectedReward > 0
-                ? `Winnings confirmed: +${expectedReward} coins`
-                : "No coin prize for this placement."}
+                ? `Prize confirmed: +${expectedReward}`
+                : "No prize for this placement."}
+            </Text>
+            <Text
+              style={[
+                styles.endCoinDelta,
+                coinDelta >= 0 ? styles.endResultCoinsPositive : styles.endResultCoinsNegative,
+              ]}
+            >
+              Net {coinDelta >= 0 ? "+" : ""}{coinDelta}
             </Text>
           </View>
         ) : null}
@@ -1045,16 +1213,95 @@ function EndGameOverlay({
             <RetryButton disabled={!retryEnabled || youRequested} onRetry={onRetry} />
           </View>
         ) : null}
-        <View style={styles.confirmActions}>
+        <View style={styles.endActions}>
           {game.isMatchmaking ? (
-            <Button label="Queue Again" onPress={onQueueAgain} />
+            <Button disabled={leaving} label="Queue Again" onPress={() => runExit(onQueueAgain)} />
           ) : (
-            <Button label="Back to Room" onPress={onBackToRoom} tone="secondary" />
+            <Button disabled={leaving} label="Back to Room" onPress={() => runExit(onBackToRoom)} tone="secondary" />
           )}
-          <Button label="Main Menu" onPress={onMainMenu} tone="secondary" />
+          <Button disabled={leaving} label="Main Menu" onPress={() => runExit(onMainMenu)} tone="secondary" />
         </View>
       </View>
     </View>
+  );
+}
+
+function rewardForMatchPlacement(entryFee: number, playerCount: number, placement: number) {
+  if (placement < 0) {
+    return 0;
+  }
+
+  const multipliers: Record<number, number[]> = {
+    2: [1.8, 0],
+    3: [1.8, 0.9, 0],
+    4: [1.8, 1.35, 0.45, 0],
+  };
+
+  return Math.round(entryFee * (multipliers[playerCount]?.[placement] ?? 0));
+}
+
+function CoinFlight({ positive, run }: { positive: boolean; run: number }) {
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    if (run <= 0) {
+      return;
+    }
+
+    progress.value = 0;
+    progress.value = withTiming(1, {
+      duration: 760,
+      easing: ReanimatedEasing.inOut(ReanimatedEasing.cubic),
+    });
+  }, [progress, run]);
+
+  if (run <= 0) {
+    return null;
+  }
+
+  return (
+    <View pointerEvents="none" style={styles.coinFlightLayer}>
+      {Array.from({ length: 9 }).map((_, index) => (
+        <FlyingCoin index={index} key={`${run}-${index}`} positive={positive} progress={progress} />
+      ))}
+    </View>
+  );
+}
+
+function FlyingCoin({
+  index,
+  positive,
+  progress,
+}: {
+  index: number;
+  positive: boolean;
+  progress: SharedValue<number>;
+}) {
+  const coinStyle = useAnimatedStyle(() => {
+    const delay = index * 0.035;
+    const local = Math.max(0, Math.min(1, (progress.value - delay) / 0.72));
+    const side = index % 2 === 0 ? -1 : 1;
+    return {
+      opacity: interpolate(local, [0, 0.08, 0.82, 1], [0, 1, 1, 0]),
+      transform: [
+        { translateX: interpolate(local, [0, 0.38, 1], [0, side * (22 + index * 3), 130 + index * 8]) },
+        { translateY: interpolate(local, [0, 0.42, 1], [0, -70 - (index % 3) * 16, -310 - index * 6]) },
+        { scale: interpolate(local, [0, 0.2, 1], [0.55, 1, 0.42]) },
+        { rotateZ: `${interpolate(local, [0, 1], [0, 360 + index * 24])}deg` },
+      ],
+    };
+  });
+
+  return (
+    <Reanimated.View
+      style={[
+        styles.flyingCoin,
+        positive ? styles.flyingCoinPositive : styles.flyingCoinNegative,
+        coinStyle,
+      ]}
+    >
+      <Text style={styles.flyingCoinText}>$</Text>
+    </Reanimated.View>
   );
 }
 
@@ -1071,6 +1318,7 @@ function PlayerHand({
   selectedCardId,
   serverUrl,
   setSelectedCardId,
+  swipeUpToPlay,
   tableOrigin,
   tableWidth,
 }: PlayerHandProps) {
@@ -1132,8 +1380,16 @@ function PlayerHand({
                       playSoundPlaceholder("pick");
                       setSelectedCardId(card.id);
                     }}
+                    onSwipePlay={(sourcePoint) => {
+                      if (!playable || !swipeUpToPlay) {
+                        return;
+                      }
+                      setSelectedCardId(null);
+                      onPlayCard(card, sourcePoint);
+                    }}
                     selected={selected}
                     serverUrl={serverUrl}
+                    swipeEnabled={swipeUpToPlay && playable}
                     tableOrigin={tableOrigin}
                   />
                 </View>
@@ -1200,6 +1456,253 @@ function PendingActionOverlay({
     <Pressable onPress={onResolvePending} style={styles.pendingStackAction}>
       <Text style={styles.pendingActionText}>Skip</Text>
     </Pressable>
+  );
+}
+
+function ModifierCueOverlay({ modifier }: { modifier: Card | null }) {
+  const [queue, setQueue] = useState<ModifierCueRequest[]>([]);
+  const [activeCue, setActiveCue] = useState<ModifierCueRequest | null>(null);
+  const lastModifierId = useRef<string | null>(null);
+  const progress = useSharedValue(0);
+
+  const enqueueModifierCue = useCallback(({ id, type }: ModifierCueRequest) => {
+    setQueue((items) => [...items, { id, type }]);
+  }, []);
+
+  useEffect(() => {
+    modifierCueSubscribers.add(enqueueModifierCue);
+    return () => {
+      modifierCueSubscribers.delete(enqueueModifierCue);
+    };
+  }, [enqueueModifierCue]);
+
+  useEffect(() => {
+    const type = modifierCueType(modifier?.modifier);
+    if (!modifier || !type || lastModifierId.current === modifier.id) {
+      return;
+    }
+
+    lastModifierId.current = modifier.id;
+    enqueueModifierCue({ id: modifier.id, type });
+  }, [enqueueModifierCue, modifier?.id, modifier?.modifier]);
+
+  useEffect(() => {
+    if (activeCue || queue.length === 0) {
+      return;
+    }
+
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    setActiveCue(next);
+    progress.value = 0;
+    progress.value = withTiming(1, {
+      duration: 1360,
+      easing: ReanimatedEasing.out(ReanimatedEasing.cubic),
+    }, (finished) => {
+      if (finished) {
+        runOnJS(setActiveCue)(null);
+      }
+    });
+  }, [activeCue, progress, queue]);
+
+  const containerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.1, 0.78, 1], [0, 1, 1, 0]),
+    transform: [
+      { translateY: interpolate(progress.value, [0, 0.32, 0.78, 1], [14, -2, 0, -20]) },
+      { scale: interpolate(progress.value, [0, 0.28, 0.42, 1], [0.94, 1.035, 1, 1]) },
+    ],
+  }));
+
+  const iconStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.12, 0.86, 1], [0, 1, 1, 0]),
+    transform: [
+      { translateY: interpolate(progress.value, [0, 0.28, 0.58, 0.78, 1], [10, -2, 1, -1, -8]) },
+      { scale: interpolate(progress.value, [0, 0.2, 0.32, 0.72, 1], [0.52, 1.13, 1, 1.045, 0.92]) },
+      { rotateZ: `${interpolate(progress.value, [0, 0.2, 0.5, 0.82, 1], [-12, 2, -1, 1, 5])}deg` },
+    ],
+  }));
+
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.18, 0.72, 1], [0, 0.9, 0.48, 0]),
+    transform: [
+      { scale: interpolate(progress.value, [0, 0.25, 0.72, 1], [0.64, 1.08, 1.18, 1.44]) },
+    ],
+  }));
+
+  const outerRingStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0.08, 0.24, 0.76, 1], [0, 0.68, 0.28, 0]),
+    transform: [
+      { scale: interpolate(progress.value, [0.08, 0.32, 0.76, 1], [0.72, 1.2, 1.34, 1.62]) },
+      { rotateZ: `${interpolate(progress.value, [0.08, 1], [0, 26])}deg` },
+    ],
+  }));
+
+  const auraStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.2, 0.74, 1], [0, 0.82, 0.38, 0]),
+    transform: [
+      { scale: interpolate(progress.value, [0, 0.3, 0.74, 1], [0.72, 1.05, 1.13, 1.34]) },
+    ],
+  }));
+
+  const bannerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0.14, 0.25, 0.78, 1], [0, 1, 1, 0]),
+    transform: [
+      { translateX: interpolate(progress.value, [0.14, 0.34, 1], [-42, 0, 0]) },
+      { scaleX: interpolate(progress.value, [0.14, 0.34, 0.45, 1], [0.26, 1.055, 1, 1]) },
+      { scaleY: interpolate(progress.value, [0.18, 0.34, 0.45, 1], [0.88, 1.05, 1, 1]) },
+    ],
+  }));
+
+  const burstStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0.18, 0.28, 0.43, 0.52], [0, 0.8, 0.2, 0]),
+    transform: [
+      { scale: interpolate(progress.value, [0.18, 0.42, 0.52], [0.7, 1.55, 1.9]) },
+    ],
+  }));
+
+  const shineStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0.28, 0.38, 0.52, 0.62], [0, 0.58, 0.16, 0]),
+    transform: [
+      { translateX: interpolate(progress.value, [0.28, 0.62], [-130, 260]) },
+      { rotateZ: "-18deg" },
+    ],
+  }));
+
+  if (!activeCue) {
+    return null;
+  }
+
+  const config = modifierCueConfigs[activeCue.type];
+
+  return (
+    <View pointerEvents="none" style={styles.modifierCueLayer}>
+      <Reanimated.View style={[styles.modifierCueContainer, containerStyle]}>
+        <View style={styles.modifierCueIconWrap}>
+          <Reanimated.View
+            style={[
+              styles.modifierCueAura,
+              { backgroundColor: config.glow },
+              auraStyle,
+            ]}
+          />
+          <Reanimated.View
+            style={[
+              styles.modifierCueOuterRing,
+              {
+                borderColor: config.accent,
+                shadowColor: config.accent,
+              },
+              outerRingStyle,
+            ]}
+          />
+          <Reanimated.View
+            style={[
+              styles.modifierCueRing,
+              {
+                backgroundColor: config.glow,
+                borderColor: config.accent,
+                shadowColor: config.accent,
+              },
+              ringStyle,
+            ]}
+          />
+          <Reanimated.View
+            style={[
+              styles.modifierCueBurst,
+              { backgroundColor: config.burst },
+              burstStyle,
+            ]}
+          />
+          <Reanimated.View style={[styles.modifierCueIconFrame, { shadowColor: config.accent }, iconStyle]}>
+            <RNImage resizeMode="contain" source={config.icon} style={styles.modifierCueIcon} />
+          </Reanimated.View>
+        </View>
+        <Reanimated.View
+          style={[
+            styles.modifierCueBanner,
+            {
+              backgroundColor: config.shadow,
+              borderColor: config.accent,
+              shadowColor: config.accent,
+            },
+            bannerStyle,
+          ]}
+        >
+          <Reanimated.View
+            pointerEvents="none"
+            style={[
+              styles.modifierCueShine,
+              { backgroundColor: config.accent },
+              shineStyle,
+            ]}
+          />
+          <Text numberOfLines={1} style={[styles.modifierCueTitle, { color: config.accent }]}>
+            {config.title}
+          </Text>
+          <Text numberOfLines={2} style={styles.modifierCueSubtitle}>
+            {config.subtitle}
+          </Text>
+        </Reanimated.View>
+        {Array.from({ length: 10 }).map((_, index) => (
+          <ModifierCueSpark color={config.accent} index={index} key={`${activeCue.id}-spark-${index}`} progress={progress} />
+        ))}
+      </Reanimated.View>
+    </View>
+  );
+}
+
+function ModifierCueSpark({
+  color,
+  index,
+  progress,
+}: {
+  color: string;
+  index: number;
+  progress: SharedValue<number>;
+}) {
+  const sparkStyle = useAnimatedStyle(() => {
+    const local = Math.max(0, Math.min(1, (progress.value - 0.72 - index * 0.014) / 0.27));
+    const direction = index % 2 === 0 ? -1 : 1;
+    return {
+      opacity: interpolate(local, [0, 0.2, 0.88, 1], [0, 0.9, 0.22, 0]),
+      transform: [
+        { translateX: interpolate(local, [0, 1], [0, direction * (26 + index * 7)]) },
+        { translateY: interpolate(local, [0, 1], [0, -18 - (index % 4) * 13]) },
+        { scale: interpolate(local, [0, 0.22, 1], [0.35, 1.08, 0.2]) },
+      ],
+    };
+  });
+
+  return (
+    <Reanimated.View
+      style={[
+        styles.modifierCueSpark,
+        {
+          backgroundColor: color,
+          left: 76 + index * 20,
+          top: index % 3 === 0 ? 12 : 80 + (index % 2) * 10,
+        },
+        sparkStyle,
+      ]}
+    />
+  );
+}
+
+function ActiveModifierBar({ modifier }: { modifier: Card | null }) {
+  const type = modifierCueType(modifier?.modifier);
+  if (!type) {
+    return null;
+  }
+
+  const config = modifierCueConfigs[type];
+
+  return (
+    <View pointerEvents="none" style={styles.activeModifierBar}>
+      <View style={[styles.activeModifierChip, { borderColor: config.accent }]}>
+        <RNImage resizeMode="contain" source={config.icon} style={styles.activeModifierChipIcon} />
+        <Text numberOfLines={1} style={styles.activeModifierChipText}>{config.title}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -1341,13 +1844,25 @@ function modifierPalette(modifier: Card["modifier"]) {
   return modifier ? palettes[modifier] ?? palettes.skip_ability : palettes.skip_ability;
 }
 
-function GameplayCue({ game, playerId }: { game: ClientGameState; playerId: string }) {
+function modifierCueType(modifier: Card["modifier"] | undefined): ModifierCueType | null {
+  const types: Record<NonNullable<Card["modifier"]>, ModifierCueType> = {
+    choose_three: "choose3",
+    draw_half: "draw05",
+    draw_one_half: "draw15",
+    skip_ability: "skipAbility",
+    timer_five: "timer5",
+  };
+
+  return modifier ? types[modifier] ?? null : null;
+}
+
+function TurnClarityCue({ game, playerId }: { game: ClientGameState; playerId: string }) {
   const [cue, setCue] = useState<{ key: string; subtitle: string; title: string } | null>(null);
-  const fade = useRef(new Animated.Value(0)).current;
-  const lift = useRef(new Animated.Value(8)).current;
+  const progress = useSharedValue(0);
   const currentPlayer = game.players.find((player) => player.id === game.currentPlayerId);
   const modifierKey = game.activeModifier?.id ?? "none";
   const suitKey = game.chosenSuit ?? "none";
+  const pendingKey = game.pendingAction ? `${game.pendingAction.type}-${game.pendingAction.targetPlayerId}-${game.pendingAction.expiresAt}` : "none";
 
   useEffect(() => {
     if (game.status !== "playing") {
@@ -1371,58 +1886,53 @@ function GameplayCue({ game, playerId }: { game: ClientGameState; playerId: stri
     }
 
     setCue({ key: `${game.currentPlayerId}-${modifierKey}-${suitKey}-${game.message}`, subtitle, title });
-    fade.setValue(0);
-    lift.setValue(8);
-    Animated.parallel([
-      Animated.timing(fade, {
-        duration: 160,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-      Animated.timing(lift, {
-        duration: 160,
-        toValue: 0,
-        useNativeDriver: true,
-      }),
-    ]).start();
-    const timer = setTimeout(() => {
-      Animated.timing(fade, {
-        duration: 260,
-        toValue: 0,
-        useNativeDriver: true,
-      }).start();
-    }, isYou ? 2200 : 1700);
-    return () => clearTimeout(timer);
+    progress.value = 0;
+    progress.value = withSequence(
+      withTiming(1, { duration: 260, easing: ReanimatedEasing.out(ReanimatedEasing.cubic) }),
+      withDelay(isYou ? 1780 : 1380, withTiming(0, { duration: 280, easing: ReanimatedEasing.in(ReanimatedEasing.cubic) })),
+    );
   }, [
     currentPlayer?.name,
-    fade,
     game.activeModifier,
     game.currentPlayerId,
     game.message,
-    game.pendingAction,
     game.status,
     game.chosenSuit,
-    lift,
     modifierKey,
+    pendingKey,
     playerId,
+    progress,
     suitKey,
   ]);
+
+  const cueStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [
+      { translateY: interpolate(progress.value, [0, 1], [18, 0]) },
+      { scale: interpolate(progress.value, [0, 0.72, 1], [0.94, 1.035, 1]) },
+    ],
+  }));
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.48, 1], [0, 0.6, 0.28]),
+    transform: [{ scaleX: interpolate(progress.value, [0, 1], [0.62, 1.12]) }],
+  }));
 
   if (!cue) {
     return null;
   }
 
   return (
-    <Animated.View
+    <Reanimated.View
       pointerEvents="none"
       style={[
-        styles.gameplayCue,
-        { opacity: fade, transform: [{ translateY: lift }] },
+        styles.turnClarityCue,
+        cueStyle,
       ]}
     >
-      <Text style={styles.gameplayCueTitle}>{cue.title}</Text>
-      <Text style={styles.gameplayCueSubtitle} numberOfLines={2}>{cue.subtitle}</Text>
-    </Animated.View>
+      <Reanimated.View style={[styles.turnClarityGlow, glowStyle]} />
+      <Text style={styles.turnClarityTitle}>{cue.title}</Text>
+      <Text style={styles.turnClaritySubtitle} numberOfLines={2}>{cue.subtitle}</Text>
+    </Reanimated.View>
   );
 }
 
@@ -1438,14 +1948,22 @@ function ModifierStack({ card }: { card: Card | null }) {
   );
 }
 
-function SkipAbilityButton({ enabled, onPress }: { enabled: boolean; onPress: () => void }) {
+function SkipAbilityButton({
+  enabled,
+  onPress,
+  remaining,
+}: {
+  enabled: boolean;
+  onPress: () => void;
+  remaining: number;
+}) {
   if (!enabled) {
     return null;
   }
 
   return (
     <Pressable onPress={onPress} style={styles.skipAbilityButton}>
-      <Text style={styles.skipAbilityText}>Skip Turn</Text>
+      <Text style={styles.skipAbilityText}>Skip Turn ({remaining})</Text>
     </Pressable>
   );
 }
@@ -1747,9 +2265,61 @@ function SuitChoiceOverlay({
 
 function OpponentSeat({ active, player, serverUrl, side }: OpponentSeatProps) {
   return (
-    <View style={[styles.opponentSeat, active ? styles.activeSeat : null]}>
-      <OpponentCardStack active={active} count={player.handCount} serverUrl={serverUrl} side={side} />
-    </View>
+    <ActiveTurnPulse active={active} intensity="soft">
+      <View style={[styles.opponentSeat, active ? styles.activeSeat : null]}>
+        <OpponentCardStack active={active} count={player.handCount} serverUrl={serverUrl} side={side} />
+      </View>
+    </ActiveTurnPulse>
+  );
+}
+
+function ActiveTurnPulse({
+  active,
+  children,
+  intensity,
+}: {
+  active: boolean;
+  children: ReactNode;
+  intensity: "soft" | "strong";
+}) {
+  const pulse = useSharedValue(0);
+
+  useEffect(() => {
+    if (!active) {
+      pulse.value = withTiming(0, { duration: 180 });
+      return;
+    }
+
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 620, easing: ReanimatedEasing.inOut(ReanimatedEasing.cubic) }),
+        withTiming(0, { duration: 680, easing: ReanimatedEasing.inOut(ReanimatedEasing.cubic) }),
+      ),
+      -1,
+      false,
+    );
+  }, [active, pulse]);
+
+  const pulseStyle = useAnimatedStyle(() => {
+    const scaleLift = intensity === "strong" ? 0.018 : 0.012;
+    const lift = intensity === "strong" ? -3 : -1.5;
+    return {
+      transform: [
+        { translateY: interpolate(pulse.value, [0, 1], [0, lift]) },
+        { scale: interpolate(pulse.value, [0, 1], [1, 1 + scaleLift]) },
+      ],
+    };
+  });
+
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(pulse.value, [0, 1], [0.08, intensity === "strong" ? 0.34 : 0.24]),
+  }));
+
+  return (
+    <Reanimated.View style={[styles.activeTurnPulseWrap, pulseStyle]}>
+      <Reanimated.View pointerEvents="none" style={[styles.activeTurnPulseGlow, glowStyle]} />
+      {children}
+    </Reanimated.View>
   );
 }
 
@@ -1758,48 +2328,78 @@ function MeasuredCard({
   disabled,
   hidden,
   onPress,
+  onSwipePlay,
   selected,
   serverUrl,
+  swipeEnabled,
   tableOrigin,
 }: {
   card: Card;
   disabled: boolean;
   hidden: boolean;
   onPress: (sourcePoint?: Point) => void;
+  onSwipePlay: (sourcePoint?: Point) => void;
   selected: boolean;
   serverUrl: string;
+  swipeEnabled: boolean;
   tableOrigin: Point;
 }) {
   const wrapperRef = useRef<View | null>(null);
 
-  function handlePress() {
+  function measureSourcePoint(callback: (sourcePoint?: Point) => void) {
     wrapperRef.current?.measureInWindow((x, y) => {
-      onPress({
+      callback({
         x: x - tableOrigin.x,
         y: y - tableOrigin.y,
       });
     });
 
     if (!wrapperRef.current) {
-      onPress();
+      callback();
     }
   }
 
+  function handlePress() {
+    measureSourcePoint(onPress);
+  }
+
+  function handleSwipeStateChange(event: { nativeEvent: { state: number; translationX: number; translationY: number; velocityY: number } }) {
+    if (!swipeEnabled || event.nativeEvent.state !== State.END) {
+      return;
+    }
+
+    const { translationX, translationY, velocityY } = event.nativeEvent;
+    const isClearSwipeUp = translationY < -46 && Math.abs(translationX) < 80 && velocityY < -240;
+    if (!isClearSwipeUp) {
+      return;
+    }
+
+    playSoundPlaceholder("play");
+    measureSourcePoint(onSwipePlay);
+  }
+
   return (
-    <View
-      ref={wrapperRef}
-      style={[
-        hidden ? styles.hiddenSourceCard : null,
-        selected ? styles.selectedCardLift : null,
-      ]}
+    <PanGestureHandler
+      enabled={swipeEnabled}
+      activeOffsetY={[-18, 18]}
+      failOffsetX={[-90, 90]}
+      onHandlerStateChange={handleSwipeStateChange}
     >
-      <GameCard
-        card={card}
-        disabled={disabled}
-        onPress={handlePress}
-        serverUrl={serverUrl}
-      />
-    </View>
+      <View
+        ref={wrapperRef}
+        style={[
+          hidden ? styles.hiddenSourceCard : null,
+          selected ? styles.selectedCardLift : null,
+        ]}
+      >
+        <GameCard
+          card={card}
+          disabled={disabled}
+          onPress={handlePress}
+          serverUrl={serverUrl}
+        />
+      </View>
+    </PanGestureHandler>
   );
 }
 
@@ -2737,6 +3337,10 @@ export function canPlayClient(card: Card, game: ClientGameState, playerId?: stri
     return false;
   }
 
+  if (!game.rules.assistedPlay) {
+    return game.rules.manualCall ? card.type === "playing" : true;
+  }
+
   if (game.pendingAction) {
     if (game.pendingAction.targetPlayerId !== playerId) {
       return false;
@@ -2823,7 +3427,9 @@ export type Card = {
 };
 
 export type RoomRules = {
+  assistedPlay: boolean;
   chooseDrawCards: boolean;
+  manualCall: boolean;
   modifierCards: boolean;
   skipOwnTurnCard: boolean;
 };
@@ -2869,6 +3475,13 @@ export type ClientGameState = {
   currentPlayerId: string | null;
   chosenSuit: Suit | null;
   activeModifier: Card | null;
+  skipAbilityUsesRemaining: number;
+  lastPlayAttempt: {
+    callerIds: string[];
+    cardId: string;
+    isLegal: boolean;
+    playerId: string;
+  } | null;
   drawChoice: DrawChoice | null;
   pendingAction: PendingAction | null;
   turnExpiresAt: number | null;
@@ -2880,6 +3493,9 @@ export type ClientGameState = {
   scores: Record<string, number>;
   message: string;
   isMatchmaking: boolean;
+  matchmakingEntryFee: number;
+  matchmakingTableId: string | null;
+  matchmakingTableName: string | null;
   rules: RoomRules;
   youAreHost: boolean;
 };
@@ -2975,6 +3591,7 @@ type GameTableProps = {
   onAdClosed: () => void;
   onAdReward: (currency: "coins" | "gems") => void;
   onBackToRoom: () => void;
+  onCallAttempt: () => void;
   onMainMenu: () => void;
   onQueueAgain: () => void;
   onShowInterstitialAd: () => void;
@@ -2988,6 +3605,7 @@ type GameTableProps = {
   playerId: string;
   secondsLeft: number;
   serverUrl: string;
+  swipeUpToPlay: boolean;
   tableLabel: string;
   timerProgress: number;
   turnProgress: number;
@@ -3026,6 +3644,7 @@ type PlayerHandProps = {
   selectedCardId: string | null;
   serverUrl: string;
   setSelectedCardId: (cardId: string | null) => void;
+  swipeUpToPlay: boolean;
   tableOrigin: Point;
   tableWidth: number;
 };
@@ -3232,6 +3851,9 @@ const styles = StyleSheet.create({
   ruleToggleActive: {
     backgroundColor: "rgba(216, 168, 79, 0.24)",
     borderColor: gameTheme.colors.goldLight,
+  },
+  ruleToggleDisabled: {
+    opacity: 0.42,
   },
   ruleToggleText: {
     color: "rgba(255, 244, 214, 0.68)",
@@ -3748,6 +4370,143 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: "16%",
   },
+  modifierCueLayer: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "flex-start",
+    paddingTop: 194,
+    zIndex: 22,
+  },
+  modifierCueContainer: {
+    alignItems: "center",
+    flexDirection: "row",
+    height: 104,
+    justifyContent: "center",
+    maxWidth: 360,
+    width: "88%",
+  },
+  modifierCueIconWrap: {
+    alignItems: "center",
+    height: 108,
+    justifyContent: "center",
+    marginRight: -10,
+    width: 108,
+    zIndex: 3,
+  },
+  modifierCueAura: {
+    borderRadius: 999,
+    height: 104,
+    position: "absolute",
+    width: 104,
+  },
+  modifierCueOuterRing: {
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 104,
+    position: "absolute",
+    shadowOpacity: 0.72,
+    shadowRadius: 18,
+    width: 104,
+  },
+  modifierCueRing: {
+    borderRadius: 999,
+    borderWidth: 2,
+    height: 88,
+    position: "absolute",
+    shadowOpacity: 0.85,
+    shadowRadius: 18,
+    width: 88,
+  },
+  modifierCueBurst: {
+    borderRadius: 999,
+    height: 96,
+    opacity: 0,
+    position: "absolute",
+    width: 96,
+  },
+  modifierCueIconFrame: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.18)",
+    borderColor: "rgba(243, 213, 138, 0.18)",
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 84,
+    justifyContent: "center",
+    shadowOpacity: 0.92,
+    shadowRadius: 18,
+    width: 84,
+  },
+  modifierCueIcon: {
+    height: 78,
+    width: 78,
+  },
+  modifierCueBanner: {
+    borderRadius: 20,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 76,
+    overflow: "hidden",
+    paddingLeft: 22,
+    paddingRight: 16,
+    shadowOpacity: 0.54,
+    shadowRadius: 16,
+  },
+  modifierCueShine: {
+    bottom: -24,
+    opacity: 0,
+    position: "absolute",
+    top: -24,
+    width: 34,
+  },
+  modifierCueTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    textShadowColor: "rgba(0,0,0,0.72)",
+    textShadowOffset: { height: 1, width: 0 },
+    textShadowRadius: 8,
+  },
+  modifierCueSubtitle: {
+    color: "rgba(255, 244, 214, 0.9)",
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 17,
+    marginTop: 3,
+  },
+  modifierCueSpark: {
+    borderRadius: 999,
+    height: 5,
+    position: "absolute",
+    width: 5,
+  },
+  activeModifierBar: {
+    alignItems: "center",
+    alignSelf: "center",
+    position: "absolute",
+    top: 116,
+    width: "100%",
+    zIndex: 13,
+  },
+  activeModifierChip: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.7)",
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 7,
+    maxWidth: 190,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  activeModifierChipIcon: {
+    height: 22,
+    width: 22,
+  },
+  activeModifierChipText: {
+    color: gameTheme.colors.cream,
+    fontSize: 12,
+    fontWeight: "900",
+  },
   tableContentLayer: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -3828,6 +4587,18 @@ const styles = StyleSheet.create({
   },
   activeSeat: {
     opacity: 1,
+  },
+  activeTurnPulseWrap: {
+    position: "relative",
+  },
+  activeTurnPulseGlow: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(243, 213, 138, 0.22)",
+    borderRadius: 18,
+    left: -8,
+    right: -8,
+    top: -8,
+    bottom: -8,
   },
   opponentStack: {
     overflow: "visible",
@@ -3999,33 +4770,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "900",
   },
-  gameplayCue: {
+  turnClarityCue: {
     alignItems: "center",
     alignSelf: "center",
-    backgroundColor: "rgba(8, 11, 22, 0.76)",
-    borderColor: "rgba(243, 213, 138, 0.58)",
-    borderRadius: 18,
+    backgroundColor: "rgba(8, 11, 22, 0.82)",
+    borderColor: "rgba(243, 213, 138, 0.72)",
+    borderRadius: 22,
     borderWidth: 1,
     maxWidth: 310,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    overflow: "hidden",
+    paddingHorizontal: 18,
+    paddingVertical: 11,
     position: "absolute",
-    top: "27%",
+    top: "25%",
     width: "76%",
-    zIndex: 14,
+    zIndex: 15,
   },
-  gameplayCueSubtitle: {
+  turnClarityGlow: {
+    bottom: 0,
+    height: 2,
+    left: 28,
+    position: "absolute",
+    right: 28,
+    backgroundColor: gameTheme.colors.goldLight,
+    shadowColor: gameTheme.colors.goldLight,
+    shadowOpacity: 0.9,
+    shadowRadius: 14,
+  },
+  turnClaritySubtitle: {
     color: "rgba(255, 244, 214, 0.82)",
     fontSize: 13,
     fontWeight: "800",
     marginTop: 3,
     textAlign: "center",
   },
-  gameplayCueTitle: {
+  turnClarityTitle: {
     color: gameTheme.colors.goldLight,
-    fontSize: 19,
+    fontSize: 21,
     fontWeight: "900",
     textAlign: "center",
+    textShadowColor: "rgba(216, 168, 79, 0.52)",
+    textShadowOffset: { height: 1, width: 0 },
+    textShadowRadius: 8,
   },
   deckPressable: {
     borderRadius: 8,
@@ -4243,7 +5029,7 @@ const styles = StyleSheet.create({
   endOverlay: {
     alignItems: "center",
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.52)",
+    backgroundColor: "rgba(0,0,0,0.68)",
     justifyContent: "center",
     paddingHorizontal: 20,
     position: "absolute",
@@ -4251,18 +5037,42 @@ const styles = StyleSheet.create({
   },
   endPanel: {
     alignItems: "center",
-    backgroundColor: "rgba(8, 11, 22, 0.9)",
-    borderColor: "rgba(243, 213, 138, 0.62)",
+    backgroundColor: "rgba(8, 11, 22, 0.94)",
+    borderColor: "rgba(243, 213, 138, 0.76)",
     borderRadius: 26,
     borderWidth: 1,
     gap: 12,
     maxWidth: 360,
-    padding: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 20,
+    shadowColor: gameTheme.colors.goldLight,
+    shadowOpacity: 0.42,
+    shadowRadius: 22,
     width: "92%",
+  },
+  endHero: {
+    alignItems: "center",
+    borderBottomColor: "rgba(243, 213, 138, 0.26)",
+    borderBottomWidth: 1,
+    paddingBottom: 10,
+    width: "100%",
+  },
+  endKicker: {
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0,
+    marginBottom: 2,
+    textTransform: "uppercase",
+  },
+  endKickerLose: {
+    color: "#ff8b7e",
+  },
+  endKickerWin: {
+    color: "#7dffaf",
   },
   endTitle: {
     color: gameTheme.colors.goldLight,
-    fontSize: 24,
+    fontSize: 30,
     fontWeight: "900",
     textAlign: "center",
     textShadowColor: "rgba(216, 168, 79, 0.52)",
@@ -4281,7 +5091,7 @@ const styles = StyleSheet.create({
   },
   endResultRow: {
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(255,255,255,0.07)",
     borderColor: "rgba(243, 213, 138, 0.22)",
     borderRadius: 14,
     borderWidth: 1,
@@ -4317,6 +5127,65 @@ const styles = StyleSheet.create({
   },
   endResultCoinsPositive: {
     color: "#7dffaf",
+  },
+  endResultCoinsNegative: {
+    color: "#ff8b7e",
+  },
+  endEconomyBlock: {
+    alignItems: "center",
+    backgroundColor: "rgba(216, 168, 79, 0.1)",
+    borderColor: "rgba(243, 213, 138, 0.28)",
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 3,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    width: "100%",
+  },
+  endEconomyTitle: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 13,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  endCoinDelta: {
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  endActions: {
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "center",
+    width: "100%",
+  },
+  coinFlightLayer: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 31,
+  },
+  flyingCoin: {
+    alignItems: "center",
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 24,
+    justifyContent: "center",
+    position: "absolute",
+    width: 24,
+  },
+  flyingCoinNegative: {
+    backgroundColor: "rgba(143, 38, 51, 0.92)",
+    borderColor: "#ff8b7e",
+  },
+  flyingCoinPositive: {
+    backgroundColor: "rgba(216, 168, 79, 0.94)",
+    borderColor: "#fff4d6",
+  },
+  flyingCoinText: {
+    color: "#fff4d6",
+    fontSize: 13,
+    fontWeight: "900",
   },
   scoreBlock: {
     gap: 8,
@@ -4404,6 +5273,25 @@ const styles = StyleSheet.create({
     zIndex: 12,
   },
   skipAbilityText: {
+    color: gameTheme.colors.cream,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  callAttemptButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(143, 38, 51, 0.8)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 18,
+    borderWidth: 1,
+    left: "50%",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    position: "absolute",
+    top: "62%",
+    transform: [{ translateX: -58 }],
+    zIndex: 12,
+  },
+  callAttemptText: {
     color: gameTheme.colors.cream,
     fontSize: 13,
     fontWeight: "900",

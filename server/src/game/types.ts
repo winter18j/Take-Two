@@ -21,7 +21,9 @@ export type Card = {
 };
 
 export type RoomRules = {
+  assistedPlay: boolean;
   chooseDrawCards: boolean;
+  manualCall: boolean;
   modifierCards: boolean;
   skipOwnTurnCard: boolean;
 };
@@ -69,9 +71,11 @@ export type Room = {
   deck: Card[];
   discard: Card[];
   middleCard: Card | null;
+  lastPlayAttempt: LastPlayAttempt | null;
   currentPlayerIndex: number;
   chosenSuit: Suit | null;
   activeModifier: Card | null;
+  skipAbilityUses: Record<string, number>;
   drawChoice: DrawChoice | null;
   pendingAction: PendingAction | null;
   turnExpiresAt: number | null;
@@ -80,11 +84,32 @@ export type Room = {
   roundResults: string[];
   rematchRequests: string[];
   scores: Record<string, number>;
+  chatMessageSequence: number;
+  chatMessages: RoomChatMessage[];
   message: string;
   isMatchmaking?: boolean;
+  matchmakingEntryFee: number;
+  matchmakingTableId: string | null;
+  matchmakingTableName: string | null;
   modifierPlayedThisTurn: boolean;
   rules: RoomRules;
   timer: NodeJS.Timeout | null;
+};
+
+export type LastPlayAttempt = {
+  callerIds: string[];
+  cardId: string;
+  isLegal: boolean;
+  playerId: string;
+};
+
+export type RoomChatMessage = {
+  body: string;
+  createdAt: string;
+  id: string;
+  playerId: string;
+  playerName: string;
+  roomId: string;
 };
 
 export type ClientGameState = {
@@ -95,9 +120,11 @@ export type ClientGameState = {
   deckCount: number;
   discardCount: number;
   middleCard: Card | null;
+  lastPlayAttempt: LastPlayAttempt | null;
   currentPlayerId: string | null;
   chosenSuit: Suit | null;
   activeModifier: Card | null;
+  skipAbilityUsesRemaining: number;
   drawChoice: DrawChoice | null;
   pendingAction: PendingAction | null;
   turnExpiresAt: number | null;
@@ -109,6 +136,9 @@ export type ClientGameState = {
   scores: Record<string, number>;
   message: string;
   isMatchmaking: boolean;
+  matchmakingEntryFee: number;
+  matchmakingTableId: string | null;
+  matchmakingTableName: string | null;
   rules: RoomRules;
   youAreHost: boolean;
 };

@@ -1,6 +1,7 @@
 import type { User } from "@supabase/supabase-js";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  Animated,
   ImageBackground,
   Image,
   KeyboardAvoidingView,
@@ -18,6 +19,7 @@ import { LogoTitle } from "../components/LogoTitle";
 import { MenuButton } from "../components/MenuButton";
 import { MenuCard } from "../components/MenuCard";
 import { TopBar } from "../components/TopBar";
+import { MatchmakingTableId, comingSoonTable, matchmakingTables, payoutForPlacement } from "../gameTables";
 import { gameTheme } from "../theme/gameTheme";
 
 // Replace this require with the final generated main-menu background if you add a separate asset.
@@ -117,15 +119,19 @@ type MainMenuScreenProps = {
   onSendFriendMessage: (body: string) => void;
   onSendFriendRequest: (username: string) => void;
   onPlayRandom: () => void;
+  onSelectTable: (tableId: MatchmakingTableId) => void;
   onSignIn: () => void;
   onSignOut: () => void;
   onSignUp: () => void;
   onToggleMusicMute: () => void;
+  onToggleSwipeUpToPlay: () => void;
   profileOpen: boolean;
   selectedFriend: FriendRow | null;
+  selectedTableId: MatchmakingTableId;
   setAuthEmail: (email: string) => void;
   setAuthPassword: (password: string) => void;
   setName: (name: string) => void;
+  swipeUpToPlay: boolean;
   user: User | null;
   wallet: { coins: number; gems: number };
 };
@@ -161,20 +167,25 @@ export function MainMenuScreen({
   onSendFriendMessage,
   onSendFriendRequest,
   onPlayRandom,
+  onSelectTable,
   onSignIn,
   onSignOut,
   onSignUp,
   onToggleMusicMute,
+  onToggleSwipeUpToPlay,
   onWatchAdPack,
   profileOpen,
   selectedFriend,
+  selectedTableId,
   setAuthEmail,
   setAuthPassword,
   setName,
+  swipeUpToPlay,
   user,
   wallet,
 }: MainMenuScreenProps) {
   const [view, setView] = useState<"customize" | "friends" | "home" | "leaderboard" | "rooms" | "shop">("home");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const queueText = `Elapsed ${matchmaking.seconds ?? 0}s | ETA ${matchmaking.etaSeconds ?? 10}s`;
   const roomButtonsDisabled = matchmaking.queued;
 
@@ -192,7 +203,10 @@ export function MainMenuScreen({
             gems={wallet.gems}
             musicMuted={musicMuted}
             onOpenProfile={onOpenProfile}
-            onOpenSettings={onOpenSettings}
+            onOpenSettings={() => {
+              onOpenSettings();
+              setSettingsOpen(true);
+            }}
             onOpenShop={() => setView("shop")}
             onToggleMusicMute={onToggleMusicMute}
             playerName={name}
@@ -218,6 +232,7 @@ export function MainMenuScreen({
                   onClaimDailyReward={onClaimDailyReward}
                   onCustomize={() => setView("customize")}
                   onPlayRandom={onPlayRandom}
+                  onSelectTable={onSelectTable}
                   onRooms={() => setView("rooms")}
                   onShop={() => setView("shop")}
                   queueText={queueText}
@@ -225,6 +240,7 @@ export function MainMenuScreen({
                   dailyRewardReady={dailyRewardReady}
                   dailyRewardNextClaimAt={dailyRewardNextClaimAt}
                   user={user}
+                  selectedTableId={selectedTableId}
                 />
               </>
             ) : null}
@@ -273,6 +289,12 @@ export function MainMenuScreen({
         </KeyboardAvoidingView>
       </SafeAreaView>
       <BottomNav currentView={view} onChangeView={setView} />
+      <SettingsModal
+        onClose={() => setSettingsOpen(false)}
+        onToggleSwipeUpToPlay={onToggleSwipeUpToPlay}
+        open={settingsOpen}
+        swipeUpToPlay={swipeUpToPlay}
+      />
       <ProfileModal
         authBusy={authBusy}
         authEmail={authEmail}
@@ -289,6 +311,42 @@ export function MainMenuScreen({
         user={user}
       />
     </ImageBackground>
+  );
+}
+
+function SettingsModal({
+  onClose,
+  onToggleSwipeUpToPlay,
+  open,
+  swipeUpToPlay,
+}: {
+  onClose: () => void;
+  onToggleSwipeUpToPlay: () => void;
+  open: boolean;
+  swipeUpToPlay: boolean;
+}) {
+  return (
+    <Modal transparent animationType="fade" visible={open} onRequestClose={onClose}>
+      <View style={styles.modalScrim}>
+        <View style={styles.settingsPanel}>
+          <View style={styles.settingsHeader}>
+            <Text style={styles.profileTitle}>Settings</Text>
+            <Pressable onPress={onClose} style={styles.profileCloseButton}>
+              <Text style={styles.profileCloseText}>Close</Text>
+            </Pressable>
+          </View>
+          <Pressable onPress={onToggleSwipeUpToPlay} style={styles.settingRow}>
+            <View style={styles.settingCopy}>
+              <Text style={styles.settingTitle}>Swipe Up To Play</Text>
+              <Text style={styles.settingDescription}>Swipe a playable card upward to play it immediately.</Text>
+            </View>
+            <View style={[styles.settingToggle, swipeUpToPlay ? styles.settingToggleActive : null]}>
+              <View style={[styles.settingToggleKnob, swipeUpToPlay ? styles.settingToggleKnobActive : null]} />
+            </View>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -381,6 +439,110 @@ function ProfileModal({
   );
 }
 
+function RandomTableCarousel({
+  nextPeek,
+  onNext,
+  onPrevious,
+  table,
+}: {
+  nextPeek: Pick<(typeof matchmakingTables)[number], "iconImage" | "name"> | typeof comingSoonTable;
+  onNext?: () => void;
+  onPrevious?: () => void;
+  table: (typeof matchmakingTables)[number];
+}) {
+  return (
+    <View style={styles.tableCarousel}>
+      <Pressable disabled={!onPrevious} onPress={onPrevious} style={[styles.tableArrow, !onPrevious ? styles.tableArrowDisabled : null]}>
+        <Text style={styles.tableArrowText}>‹</Text>
+      </Pressable>
+      <FlippingTableCard table={table} />
+      <View style={styles.tablePeek}>
+        <Image source={nextPeek.iconImage} resizeMode="cover" style={styles.tablePeekImage} />
+      </View>
+      <Pressable disabled={!onNext} onPress={onNext} style={[styles.tableArrow, !onNext ? styles.tableArrowDisabled : null]}>
+        <Text style={styles.tableArrowText}>›</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function FlippingTableCard({ table }: { table: (typeof matchmakingTables)[number] }) {
+  const [showDetails, setShowDetails] = useState(false);
+  const flip = useRef(new Animated.Value(0)).current;
+  const maxWin = payoutForPlacement(table.entryFee, 2, 0);
+  const second4p = payoutForPlacement(table.entryFee, 4, 1);
+  const third4p = payoutForPlacement(table.entryFee, 4, 2);
+  const ruleText = table.manualCall
+    ? "Classic manual table. No modifiers or card choice. Play freely and use Call Attempt against invalid moves."
+    : table.assisted
+      ? "Assisted table. Playable cards are highlighted. Card choice and modifiers are active."
+      : "Expert table. Every card is highlighted, but valid moves are still enforced without hints.";
+
+  useEffect(() => {
+    setShowDetails(false);
+    flip.setValue(0);
+  }, [flip, table.id]);
+
+  function toggleDetails() {
+    const nextValue = showDetails ? 0 : 1;
+    setShowDetails(!showDetails);
+    Animated.timing(flip, {
+      duration: 440,
+      toValue: nextValue,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  const frontRotation = flip.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+  const backRotation = flip.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["180deg", "360deg"],
+  });
+
+  return (
+    <View style={styles.tableCard}>
+      <Animated.View style={[styles.tableCardFace, { transform: [{ perspective: 900 }, { rotateX: frontRotation }] }]}>
+        <ImageBackground source={table.iconImage} resizeMode="cover" style={styles.tableCardArtwork} imageStyle={styles.tableCardImage}>
+          <Pressable accessibilityLabel={`More information about ${table.name}`} onPress={toggleDetails} style={styles.tableInfoButton}>
+            <Text style={styles.tableInfoButtonText}>i</Text>
+          </Pressable>
+          <View style={styles.tableInfoPanel}>
+            <Text style={styles.tableName}>{table.name}</Text>
+            <Text style={styles.tableEntryLabel}>Entry</Text>
+            <Text style={styles.tableEntry}>{table.entryFee.toLocaleString()}</Text>
+          </View>
+        </ImageBackground>
+      </Animated.View>
+      <Animated.View style={[styles.tableCardFace, styles.tableCardBack, { transform: [{ perspective: 900 }, { rotateX: backRotation }] }]}>
+        <ImageBackground
+          source={table.iconImage}
+          resizeMode="cover"
+          style={styles.tableCardArtwork}
+          imageStyle={[styles.tableCardImage, styles.tableCardMirroredImage]}
+        >
+          <View style={styles.tableCardBackShade} />
+          <Pressable accessibilityLabel={`Close information about ${table.name}`} onPress={toggleDetails} style={styles.tableInfoButton}>
+            <Text style={styles.tableInfoButtonText}>×</Text>
+          </Pressable>
+          <View style={styles.tableBackContent}>
+            <Text style={styles.tableBackTitle}>{table.name}</Text>
+            <Text style={styles.tableBackTheme}>{table.theme}</Text>
+            <Text style={styles.tableBackRules}>{ruleText}</Text>
+            <Text style={styles.tableBackHeading}>Prize Pool</Text>
+            <Text style={styles.tableBackDetails}>2P: {maxWin.toLocaleString()} / 0</Text>
+            <Text style={styles.tableBackDetails}>3P: {maxWin.toLocaleString()} / {payoutForPlacement(table.entryFee, 3, 1).toLocaleString()} / 0</Text>
+            <Text style={styles.tableBackDetails}>4P: {maxWin.toLocaleString()} / {second4p.toLocaleString()} / {third4p.toLocaleString()} / 0</Text>
+            <Text style={styles.tableBackFootnote}>90% of entries return as winnings.</Text>
+          </View>
+        </ImageBackground>
+      </Animated.View>
+    </View>
+  );
+}
+
 function BottomNav({
   currentView,
   onChangeView,
@@ -406,11 +568,13 @@ function HomeActions({
   onClaimDailyReward,
   onCustomize,
   onPlayRandom,
+  onSelectTable,
   onRooms,
   onShop,
   queueText,
   roomButtonsDisabled,
   user,
+  selectedTableId,
 }: {
   dailyRewardNextClaimAt: string | null;
   dailyRewardReady: boolean;
@@ -420,21 +584,36 @@ function HomeActions({
   onClaimDailyReward: () => void;
   onCustomize: () => void;
   onPlayRandom: () => void;
+  onSelectTable: (tableId: MatchmakingTableId) => void;
   onRooms: () => void;
   onShop: () => void;
   queueText: string;
   roomButtonsDisabled: boolean;
   user: User | null;
+  selectedTableId: MatchmakingTableId;
 }) {
+  const selectedIndex = matchmakingTables.findIndex((tableConfig) => tableConfig.id === selectedTableId);
+  const safeIndex = selectedIndex >= 0 ? selectedIndex : 0;
+  const selectedTable = matchmakingTables[safeIndex];
+  const nextPeek = safeIndex >= matchmakingTables.length - 1 ? comingSoonTable : matchmakingTables[safeIndex + 1];
+  const previousTable = matchmakingTables[safeIndex - 1] ?? null;
+  const nextTable = matchmakingTables[safeIndex + 1] ?? null;
+
   return (
     <>
+      <RandomTableCarousel
+        nextPeek={nextPeek}
+        onNext={nextTable ? () => onSelectTable(nextTable.id) : undefined}
+        onPrevious={previousTable ? () => onSelectTable(previousTable.id) : undefined}
+        table={selectedTable}
+      />
       <View style={styles.actions}>
         <MenuButton
           disabled={!user}
           iconSource={menuIcons.playRandom}
           label={matchmaking.queued ? `Finding Match ${matchmaking.seconds ?? 0}s` : "Play Random"}
           onPress={matchmaking.queued ? onCancelMatchmaking : onPlayRandom}
-          subtitle={user ? "25 coins entry | Prize pool" : "Sign in to unlock"}
+          subtitle={user ? `${selectedTable.entryFee.toLocaleString()} entry | Win ${payoutForPlacement(selectedTable.entryFee, 2, 0).toLocaleString()}` : "Sign in to unlock"}
         />
         {matchmaking.queued ? <Text style={styles.notice}>{queueText}</Text> : null}
         <MenuButton
@@ -926,6 +1105,19 @@ const styles = StyleSheet.create({
     padding: 16,
     width: "100%",
   },
+  profileCloseButton: {
+    backgroundColor: "rgba(216, 168, 79, 0.14)",
+    borderColor: "rgba(243, 213, 138, 0.32)",
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  profileCloseText: {
+    color: gameTheme.colors.cream,
+    fontSize: 12,
+    fontWeight: "900",
+  },
   profileText: {
     color: "rgba(255, 244, 214, 0.78)",
     fontSize: 14,
@@ -957,6 +1149,69 @@ const styles = StyleSheet.create({
   segmentActive: {
     backgroundColor: "rgba(216, 168, 79, 0.18)",
     borderColor: gameTheme.colors.goldLight,
+  },
+  settingCopy: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  settingDescription: {
+    color: "rgba(255, 244, 214, 0.68)",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  settingRow: {
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(243, 213, 138, 0.24)",
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    padding: 12,
+  },
+  settingsHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  settingsPanel: {
+    backgroundColor: gameTheme.colors.panelStrong,
+    borderColor: "rgba(243, 213, 138, 0.42)",
+    borderRadius: gameTheme.radius.lg,
+    borderWidth: 1,
+    gap: 14,
+    maxWidth: 380,
+    padding: 16,
+    width: "100%",
+  },
+  settingTitle: {
+    color: gameTheme.colors.cream,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  settingToggle: {
+    backgroundColor: "rgba(8, 11, 22, 0.82)",
+    borderColor: "rgba(243, 213, 138, 0.28)",
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 30,
+    justifyContent: "center",
+    paddingHorizontal: 3,
+    width: 54,
+  },
+  settingToggleActive: {
+    backgroundColor: "rgba(216, 168, 79, 0.34)",
+    borderColor: gameTheme.colors.goldLight,
+  },
+  settingToggleKnob: {
+    backgroundColor: "rgba(255, 244, 214, 0.68)",
+    borderRadius: 999,
+    height: 22,
+    width: 22,
+  },
+  settingToggleKnobActive: {
+    alignSelf: "flex-end",
+    backgroundColor: gameTheme.colors.goldLight,
   },
   segmentRow: {
     flexDirection: "row",
@@ -1187,6 +1442,184 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "900",
     textAlign: "center",
+  },
+  tableArrow: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.72)",
+    borderColor: "rgba(243, 213, 138, 0.36)",
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: "center",
+    width: 42,
+    zIndex: 3,
+  },
+  tableArrowDisabled: {
+    opacity: 0.25,
+  },
+  tableArrowText: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 30,
+    fontWeight: "900",
+    lineHeight: 34,
+  },
+  tableCard: {
+    backgroundColor: "rgba(9, 20, 42, 0.7)",
+    borderRadius: 22,
+    flex: 1,
+    height: 286,
+    shadowColor: gameTheme.colors.goldLight,
+    shadowOpacity: 0.36,
+    shadowRadius: 16,
+  },
+  tableCardArtwork: {
+    flex: 1,
+  },
+  tableCardBack: {
+    position: "absolute",
+  },
+  tableCardBackShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(2, 4, 10, 0.76)",
+  },
+  tableCardFace: {
+    backfaceVisibility: "hidden",
+    borderRadius: 22,
+    height: "100%",
+    overflow: "hidden",
+    width: "100%",
+  },
+  tableCardImage: {
+    borderRadius: 22,
+  },
+  tableCardMirroredImage: {
+    transform: [{ scaleX: -1 }],
+  },
+  tableCarousel: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 4,
+    width: "100%",
+  },
+  tableBackContent: {
+    alignItems: "center",
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingTop: 10,
+  },
+  tableBackDetails: {
+    color: "rgba(255, 244, 214, 0.9)",
+    fontSize: 10,
+    fontWeight: "800",
+    marginTop: 2,
+    textAlign: "center",
+  },
+  tableBackFootnote: {
+    color: "rgba(125, 255, 175, 0.86)",
+    fontSize: 9,
+    fontWeight: "900",
+    marginTop: 5,
+    textAlign: "center",
+  },
+  tableBackHeading: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 11,
+    fontWeight: "900",
+    marginTop: 9,
+    textTransform: "uppercase",
+  },
+  tableBackRules: {
+    color: "rgba(255, 244, 214, 0.86)",
+    fontSize: 10,
+    fontWeight: "800",
+    lineHeight: 14,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  tableBackTheme: {
+    color: "rgba(243, 213, 138, 0.76)",
+    fontSize: 9,
+    fontWeight: "900",
+    marginTop: 2,
+    textTransform: "uppercase",
+  },
+  tableBackTitle: {
+    color: gameTheme.colors.cream,
+    fontSize: 23,
+    fontWeight: "900",
+    textShadowColor: "rgba(216, 168, 79, 0.44)",
+    textShadowOffset: { height: 1, width: 0 },
+    textShadowRadius: 8,
+  },
+  tableEntry: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 29,
+    fontWeight: "900",
+    textShadowColor: "rgba(216, 168, 79, 0.5)",
+    textShadowOffset: { height: 2, width: 0 },
+    textShadowRadius: 10,
+  },
+  tableEntryLabel: {
+    color: "rgba(255, 244, 214, 0.72)",
+    fontSize: 9,
+    fontWeight: "900",
+    marginTop: 1,
+    textTransform: "uppercase",
+  },
+  tableInfoPanel: {
+    alignItems: "center",
+    bottom: 12,
+    height: "38%",
+    justifyContent: "center",
+    left: 14,
+    paddingHorizontal: 5,
+    position: "absolute",
+    right: 14,
+  },
+  tableInfoButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(8, 11, 22, 0.82)",
+    borderColor: gameTheme.colors.goldLight,
+    borderRadius: 999,
+    borderWidth: 1,
+    bottom: 18,
+    height: 28,
+    justifyContent: "center",
+    position: "absolute",
+    right: 18,
+    width: 28,
+    zIndex: 4,
+  },
+  tableInfoButtonText: {
+    color: gameTheme.colors.goldLight,
+    fontSize: 17,
+    fontWeight: "900",
+    lineHeight: 19,
+  },
+  tableName: {
+    color: gameTheme.colors.cream,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  tablePeek: {
+    alignItems: "center",
+    borderColor: "rgba(243, 213, 138, 0.16)",
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 184,
+    justifyContent: "center",
+    marginLeft: -20,
+    overflow: "hidden",
+    width: 42,
+  },
+  tablePeekImage: {
+    height: 184,
+    left: 0,
+    position: "absolute",
+    top: 0,
+    width: 132,
   },
   subView: {
     gap: 14,

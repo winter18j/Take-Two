@@ -409,3 +409,33 @@ test("skip ability modifier lets current player skip without a skip card", () =>
 
   assert.equal(room.players[room.currentPlayerIndex]?.id, secondPlayer.id);
 });
+
+test("skip ability modifier can only be used twice by each player", () => {
+  const { io } = fakeIo();
+  const { room, player } = createRoom(io, "socket-1", "Player 1");
+  addPlayerToRoom(room, "socket-2", "Player 2");
+  setRoomRules(io, room.id, player.id, { modifierCards: true });
+  startGame(io, room.id, player.id);
+
+  room.currentPlayerIndex = room.players.findIndex((candidate) => candidate.id === player.id);
+  room.activeModifier = {
+    id: "modifier-skip-ability-1",
+    imageKey: "modifier-skip-ability",
+    imagePath: "/cards/modifier-skip-ability.png",
+    modifier: "skip_ability",
+    rank: 12,
+    suit: "gold",
+    type: "modifier",
+  };
+
+  skipTurnWithModifier(io, room.id, player.id);
+  room.currentPlayerIndex = room.players.findIndex((candidate) => candidate.id === player.id);
+  skipTurnWithModifier(io, room.id, player.id);
+  room.currentPlayerIndex = room.players.findIndex((candidate) => candidate.id === player.id);
+
+  assert.equal(room.skipAbilityUses[player.id], 2);
+  assert.throws(
+    () => skipTurnWithModifier(io, room.id, player.id),
+    /already used your two skips/,
+  );
+});

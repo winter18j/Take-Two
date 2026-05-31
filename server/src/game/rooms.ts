@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { createDeck, drawCards, shuffle } from "./deck.js";
+import { defaultMatchmakingTable, getMatchmakingTable, MatchmakingTableId } from "./tables.js";
 import {
   Card,
   ClientGameState,
@@ -15,15 +16,20 @@ import {
 
 const rooms = new Map<string, Room>();
 const defaultRules: RoomRules = {
+  assistedPlay: true,
   chooseDrawCards: false,
+  manualCall: false,
   modifierCards: false,
   skipOwnTurnCard: false,
 };
 const matchmakingRules: RoomRules = {
+  assistedPlay: true,
   chooseDrawCards: true,
+  manualCall: false,
   modifierCards: true,
   skipOwnTurnCard: true,
 };
+const skipAbilityUseLimit = 2;
 
 function roomCode(): string {
   let code = "";
@@ -108,9 +114,13 @@ function toClientState(room: Room, player: Player): ClientGameState {
     deckCount: room.deck.length,
     discardCount: room.discard.length,
     middleCard: room.middleCard,
+    lastPlayAttempt: room.rules.manualCall ? room.lastPlayAttempt : null,
     currentPlayerId: getCurrentPlayer(room)?.id ?? null,
     chosenSuit: room.chosenSuit,
     activeModifier: room.activeModifier,
+    skipAbilityUsesRemaining: room.activeModifier?.modifier === "skip_ability"
+      ? Math.max(0, skipAbilityUseLimit - (room.skipAbilityUses[player.id] ?? 0))
+      : 0,
     drawChoice: room.drawChoice?.playerId === player.id ? room.drawChoice : null,
     pendingAction: room.pendingAction,
     turnExpiresAt: room.pendingAction?.expiresAt ?? room.turnExpiresAt,
@@ -122,6 +132,9 @@ function toClientState(room: Room, player: Player): ClientGameState {
     scores: room.scores,
     message: room.message,
     isMatchmaking: Boolean(room.isMatchmaking),
+    matchmakingEntryFee: room.matchmakingEntryFee,
+    matchmakingTableId: room.matchmakingTableId,
+    matchmakingTableName: room.matchmakingTableName,
     rules: room.rules,
     youAreHost: player.isHost,
   };
@@ -255,6 +268,27 @@ function canPlay(card: Card, room: Room, player: Player) {
   return card.suit === room.middleCard.suit || card.rank === room.middleCard.rank;
 }
 
+function isLegalManualPlay(card: Card, room: Room) {
+  const previousMiddle = room.middleCard;
+  const previousChosenSuit = room.chosenSuit;
+  const previousPending = room.pendingAction;
+
+  if (card.type !== "playing") {
+    return false;
+  }
+  if (!previousMiddle) {
+    return true;
+  }
+  if (previousPending) {
+    return previousPending.type === "draw" ? card.rank === 2 : card.rank === 1;
+  }
+  if (previousChosenSuit) {
+    return card.suit === previousChosenSuit || card.rank === 7;
+  }
+
+  return card.suit === previousMiddle.suit || card.rank === previousMiddle.rank;
+}
+
 function findPlayable(player: Player, room: Room) {
   return player.hand.find((card) => canPlay(card, room, player));
 }
@@ -302,6 +336,11 @@ function scheduleTurnTimer(io: Server, room: Room) {
 function moveToNext(room: Room, fromIndex = room.currentPlayerIndex) {
   room.currentPlayerIndex = getNextActiveIndex(room, fromIndex);
   room.modifierPlayedThisTurn = false;
+}
+
+function setActiveModifier(room: Room, modifier: Card | null) {
+  room.activeModifier = modifier;
+  room.skipAbilityUses = {};
 }
 
 function returnLeftoverModifiersToDeck(room: Room, player: Player) {
@@ -385,14 +424,17 @@ function finishRoundByForfeit(room: Room, forfeitingPlayer: Player) {
 
 function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, chosenSuit?: Suit) {
   const cardIndex = player.hand.findIndex((heldCard) => heldCard.id === card.id);
-  if (cardIndex < 0 || !canPlay(card, room, player)) {
+  const manualPlay = room.rules.manualCall && card.type === "playing";
+  const legalManualPlay = manualPlay ? isLegalManualPlay(card, room) : true;
+  if (cardIndex < 0 || (!manualPlay && !canPlay(card, room, player))) {
     return false;
   }
 
   const [playedCard] = player.hand.splice(cardIndex, 1);
+  room.lastPlayAttempt = null;
 
   if (playedCard.type === "modifier") {
-    room.activeModifier = playedCard;
+    setActiveModifier(room, playedCard);
     room.modifierPlayedThisTurn = true;
     room.message = `${player.name} played ${modifierLabel(playedCard.modifier)} modifier.`;
     if (finishPlayerIfNeeded(room, player)) {
@@ -442,6 +484,14 @@ function applyPlayedCard(io: Server, room: Room, player: Player, card: Card, cho
   }
 
   room.middleCard = playedCard;
+  if (manualPlay) {
+    room.lastPlayAttempt = {
+      callerIds: [],
+      cardId: playedCard.id,
+      isLegal: legalManualPlay,
+      playerId: player.id,
+    };
+  }
   room.discard.push(playedCard);
   clearTimer(room);
 
@@ -554,9 +604,11 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
     deck: [],
     discard: [],
     middleCard: null,
+    lastPlayAttempt: null,
     currentPlayerIndex: 0,
     chosenSuit: null,
     activeModifier: null,
+    skipAbilityUses: {},
     drawChoice: null,
     pendingAction: null,
     turnExpiresAt: null,
@@ -565,8 +617,13 @@ export function createRoom(io: Server, socketId: string, name: string, accountId
     roundResults: [],
     rematchRequests: [],
     scores: {},
+    chatMessageSequence: 0,
+    chatMessages: [],
     message: "Waiting for players.",
     isMatchmaking: false,
+    matchmakingEntryFee: defaultMatchmakingTable.entryFee,
+    matchmakingTableId: null,
+    matchmakingTableName: null,
     modifierPlayedThisTurn: false,
     rules: { ...defaultRules },
     timer: null,
@@ -690,9 +747,10 @@ export function returnToLobby(io: Server, roomId: string, playerId: string) {
   room.deck = [];
   room.discard = [];
   room.middleCard = null;
+  room.lastPlayAttempt = null;
   room.currentPlayerIndex = 0;
   room.chosenSuit = null;
-  room.activeModifier = null;
+  setActiveModifier(room, null);
   room.drawChoice = null;
   room.modifierPlayedThisTurn = false;
   room.pendingAction = null;
@@ -713,7 +771,7 @@ export function returnToLobby(io: Server, roomId: string, playerId: string) {
 
 export function createMatchmakingRoom(
   io: Server,
-  entries: Array<{ accountId: string; name: string; socketId: string }>,
+  entries: Array<{ accountId: string; name: string; socketId: string; tableId?: string }>,
   botCount = 0,
 ) {
   if (entries.length + botCount < 2 || entries.length + botCount > 4) {
@@ -732,7 +790,11 @@ export function createMatchmakingRoom(
   }
 
   room.isMatchmaking = true;
-  room.rules = { ...matchmakingRules };
+  const tableConfig = getMatchmakingTable(entries[0]?.tableId);
+  room.rules = { ...matchmakingRules, ...tableConfig.rules, assistedPlay: tableConfig.assisted, manualCall: tableConfig.manualCall };
+  room.matchmakingEntryFee = tableConfig.entryFee;
+  room.matchmakingTableId = tableConfig.id;
+  room.matchmakingTableName = tableConfig.name;
   startRound(io, room, { randomizePlayers: true });
   maybeRunBotTurn(io, room);
   return { room, players };
@@ -764,7 +826,15 @@ export function setRoomRules(io: Server, roomId: string, playerId: string, rules
     throw new Error("Rules can only be changed before the game starts.");
   }
 
-  room.rules = { ...room.rules, ...rules };
+  const nextRules = { ...room.rules, ...rules };
+  if (nextRules.manualCall) {
+    nextRules.assistedPlay = false;
+    nextRules.chooseDrawCards = false;
+    nextRules.modifierCards = false;
+    nextRules.skipOwnTurnCard = false;
+  }
+
+  room.rules = nextRules;
   room.message = "Room rules updated.";
   emitRoom(io, room);
 }
@@ -786,12 +856,13 @@ function startRound(io: Server, room: Room, options: { randomizePlayers?: boolea
     throw new Error("Could not start the game because the deck is empty.");
   }
   room.middleCard = middleCard;
+  room.lastPlayAttempt = null;
   room.discard = [middleCard];
   room.status = "playing";
   room.currentPlayerIndex = 0;
   room.pendingAction = null;
   room.chosenSuit = null;
-  room.activeModifier = null;
+  setActiveModifier(room, null);
   room.drawChoice = null;
   room.modifierPlayedThisTurn = false;
   room.winnerId = null;
@@ -959,7 +1030,11 @@ export function skipTurnWithModifier(io: Server, roomId: string, playerId: strin
   if (getCurrentPlayer(room)?.id !== player.id || room.drawChoice) {
     throw new Error("It is not your turn.");
   }
+  if ((room.skipAbilityUses[player.id] ?? 0) >= skipAbilityUseLimit) {
+    throw new Error("You already used your two skips for this modifier.");
+  }
 
+  room.skipAbilityUses[player.id] = (room.skipAbilityUses[player.id] ?? 0) + 1;
   clearTimer(room);
   if (room.pendingAction?.targetPlayerId === player.id) {
     const target = room.players[getNextActiveIndex(room)];
@@ -977,6 +1052,35 @@ export function skipTurnWithModifier(io: Server, roomId: string, playerId: strin
   }
   emitRoom(io, room);
   maybeRunBotTurn(io, room);
+}
+
+export function callAttempt(io: Server, roomId: string, playerId: string) {
+  const room = requireRoom(roomId);
+  const caller = requirePlayer(room, playerId);
+  const attempt = room.lastPlayAttempt;
+
+  if (!room.rules.manualCall || room.status !== "playing") {
+    throw new Error("Call Attempt is only available at manual tables.");
+  }
+  if (!attempt) {
+    throw new Error("There is no move to call.");
+  }
+  if (attempt.playerId === caller.id) {
+    throw new Error("You cannot call your own move.");
+  }
+  if (attempt.callerIds.includes(caller.id)) {
+    throw new Error("You already called this attempt.");
+  }
+
+  const target = attempt.isLegal ? caller : requirePlayer(room, attempt.playerId);
+  const drawn = drawFromDeck(room, 2);
+  target.hand.push(...drawn);
+  attempt.callerIds.push(caller.id);
+  room.lastPlayAttempt = null;
+  room.message = attempt.isLegal
+    ? `${caller.name} called wrong and drew ${drawn.length} cards.`
+    : `${caller.name} caught an illegal move. ${target.name} drew ${drawn.length} cards.`;
+  emitRoom(io, room);
 }
 
 export function resolveTurnTimeout(io: Server, roomId: string) {

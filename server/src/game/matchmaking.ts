@@ -4,6 +4,7 @@ export type MatchmakingEntry = {
   joinedAt: number;
   name: string;
   socketId: string;
+  tableId: string;
 };
 
 export type MatchmakingMatch = {
@@ -54,7 +55,7 @@ export class MatchmakingQueue {
   }
 
   findMatch(now = Date.now()): MatchmakingMatch | null {
-    const sorted = this.sortedEntries();
+    const sorted = this.sortedEntriesForOldestTable();
     if (sorted.length < 2) {
       const solo = sorted[0];
       if (solo && now - solo.joinedAt >= 10_000) {
@@ -82,6 +83,15 @@ export class MatchmakingQueue {
 
   private sortedEntries() {
     return [...this.entries.values()].sort((left, right) => left.joinedAt - right.joinedAt);
+  }
+
+  private sortedEntriesForOldestTable() {
+    const oldest = this.sortedEntries()[0];
+    if (!oldest) {
+      return [];
+    }
+
+    return this.sortedEntries().filter((entry) => entry.tableId === oldest.tableId);
   }
 }
 

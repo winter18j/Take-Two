@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import { createClient } from "@supabase/supabase-js";
 import {
   createRoom,
+  callAttempt,
   createMatchmakingRoom,
   chooseDrawCard,
   drawUntilPlayable,
@@ -25,7 +26,8 @@ import {
   startGame,
 } from "./game/rooms.js";
 import { MatchmakingQueue } from "./game/matchmaking.js";
-import { Suit, suits } from "./game/types.js";
+import { getMatchmakingTable, payoutForPlacement } from "./game/tables.js";
+import { RoomChatMessage, Suit, suits } from "./game/types.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -42,7 +44,7 @@ const supabase = supabaseUrl.includes("supabase.co") && !supabaseUrl.includes("Y
 const matchmakingQueue = new MatchmakingQueue();
 const persistedMatches = new Set<string>();
 const devEmails = new Set(["walidsabhied@gmail.com", "houdasafi555@gmail.com"]);
-const matchmakingEntryCost = 25;
+const roomChatHistoryLimit = 200;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cardsPath = path.resolve(__dirname, "../../resources/cards");
@@ -114,14 +116,14 @@ async function hasEnoughCoins(accountId: string, email: unknown, amount: number)
   return (data?.coins ?? 0) >= amount;
 }
 
-async function spendMatchmakingCoins(accountId: string, email: unknown) {
+async function spendMatchmakingCoins(accountId: string, email: unknown, amount: number) {
   if (!supabase || isDevEmail(email)) {
     return true;
   }
 
   const { data, error } = await supabase.rpc("spend_coins", {
     user_uuid: accountId,
-    amount: matchmakingEntryCost,
+    amount,
     reason_text: "random_matchmaking_entry",
     metadata_json: {},
   });
@@ -166,16 +168,6 @@ async function updatePresence(
     .eq("id", accountId);
 }
 
-function rewardForPlacement(playerCount: number, placement: number) {
-  const rewards: Record<number, number[]> = {
-    2: [40, 0],
-    3: [45, 20, 10],
-    4: [55, 30, 15, 0],
-  };
-
-  return rewards[playerCount]?.[placement] ?? 0;
-}
-
 async function tryStartMatchmakingRoom() {
   const match = matchmakingQueue.findMatch();
   if (!match) {
@@ -184,10 +176,11 @@ async function tryStartMatchmakingRoom() {
 
   for (const entry of match.entries) {
     const socket = io.sockets.sockets.get(entry.socketId);
-    const ok = await spendMatchmakingCoins(entry.accountId, socket?.data.email);
+    const tableConfig = getMatchmakingTable(entry.tableId);
+    const ok = await spendMatchmakingCoins(entry.accountId, socket?.data.email, tableConfig.entryFee);
     if (!ok) {
       io.to(entry.socketId).emit("matchmakingStatus", { queued: false });
-      io.to(entry.socketId).emit("errorMessage", "You need 25 coins to play random.");
+      io.to(entry.socketId).emit("errorMessage", `You need ${tableConfig.entryFee} coins to play this table.`);
       return;
     }
   }
@@ -247,7 +240,7 @@ async function persistFinishedMatch(roomId: string) {
       await awardCoins(
         player.accountId,
         player.socketId ? io.sockets.sockets.get(player.socketId)?.data.email : null,
-        rewardForPlacement(room.players.length, placement),
+        payoutForPlacement(room.matchmakingEntryFee, room.players.length, placement),
         "random_match_reward",
       );
     }
@@ -284,6 +277,7 @@ io.on("connection", (socket) => {
       const { room, player } = createRoom(io, socket.id, name, socket.data.accountId, socket.data.accountWins);
       void updatePresence(socket.data.accountId, "inroom", room);
       socket.emit("session", { roomId: room.id, playerId: player.id });
+      socket.emit("roomChatHistory", room.chatMessages);
     } catch (error) {
       handleSocketError(socket.id, error);
     }
@@ -294,12 +288,13 @@ io.on("connection", (socket) => {
       const { room, player } = joinRoom(io, socket.id, roomId, name, socket.data.accountId, socket.data.accountWins);
       void updatePresence(socket.data.accountId, "inroom", room);
       socket.emit("session", { roomId: room.id, playerId: player.id });
+      socket.emit("roomChatHistory", room.chatMessages);
     } catch (error) {
       handleSocketError(socket.id, error);
     }
   });
 
-  socket.on("joinMatchmaking", async ({ name }: { name: string }) => {
+  socket.on("joinMatchmaking", async ({ name, tableId }: { name: string; tableId?: string }) => {
     try {
       const accountId = socket.data.accountId;
       if (!accountId) {
@@ -310,8 +305,9 @@ io.on("connection", (socket) => {
       if (profile.random_banned_until && new Date(profile.random_banned_until).getTime() > Date.now()) {
         throw new Error("Random play is temporarily locked because of recent quits.");
       }
-      if (!(await hasEnoughCoins(accountId, socket.data.email, matchmakingEntryCost))) {
-        throw new Error("You need 25 coins to play random.");
+      const tableConfig = getMatchmakingTable(tableId);
+      if (!(await hasEnoughCoins(accountId, socket.data.email, tableConfig.entryFee))) {
+        throw new Error(`You need ${tableConfig.entryFee} coins to play this table.`);
       }
 
       matchmakingQueue.add({
@@ -320,6 +316,7 @@ io.on("connection", (socket) => {
         joinedAt: Date.now(),
         name: name?.trim() || socket.data.email?.split("@")[0] || "Player",
         socketId: socket.id,
+        tableId: tableConfig.id,
       });
       const status = matchmakingQueue.status(socket.id);
       socket.emit("matchmakingStatus", {
@@ -342,6 +339,7 @@ io.on("connection", (socket) => {
       const { room, player } = resumeSession(io, socket.id, roomId, playerId, name);
       void updatePresence(socket.data.accountId, room.status === "playing" ? "ingame" : "inroom", room);
       socket.emit("session", { roomId: room.id, playerId: player.id });
+      socket.emit("roomChatHistory", room.chatMessages);
     } catch (error) {
       socket.emit("session", null);
       handleSocketError(socket.id, error);
@@ -440,6 +438,14 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("callAttempt", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
+    try {
+      callAttempt(io, roomId, playerId);
+    } catch (error) {
+      handleSocketError(socket.id, error);
+    }
+  });
+
   socket.on("resolvePending", ({ roomId, playerId }: { roomId: string; playerId: string }) => {
     try {
       resolvePending(io, roomId, playerId);
@@ -461,14 +467,18 @@ io.on("connection", (socket) => {
         throw new Error("Message must be between 1 and 300 characters.");
       }
 
-      io.to(room.id).emit("roomChatMessage", {
+      room.chatMessageSequence += 1;
+      const message: RoomChatMessage = {
         body: text,
         createdAt: new Date().toISOString(),
-        id: `${Date.now()}-${player.id}`,
+        id: `${room.id}-${room.chatMessageSequence}`,
         playerId: player.id,
         playerName: player.name,
         roomId: room.id,
-      });
+      };
+
+      room.chatMessages = [...room.chatMessages, message].slice(-roomChatHistoryLimit);
+      io.to(room.id).emit("roomChatMessage", message);
     } catch (error) {
       handleSocketError(socket.id, error);
     }

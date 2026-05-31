@@ -34,9 +34,12 @@ import {
   trimActivityLog,
 } from "./src/views";
 import { MainMenuScreen } from "./src/screens/MainMenuScreen";
+import { MatchmakingTableId, getMatchmakingTable } from "./src/gameTables";
 
 const storedSessionKey = "take-two-session";
 const storedNameKey = "take-two-player-name";
+const storedSwipeUpToPlayKey = "take-two-swipe-up-to-play";
+const storedMatchmakingTableKey = "take-two-matchmaking-table";
 const configuredServerUrl = process.env.EXPO_PUBLIC_SERVER_URL;
 const defaultServerUrl = configuredServerUrl && !configuredServerUrl.includes("YOUR_SERVER_HOST")
   ? configuredServerUrl
@@ -134,6 +137,8 @@ export default function App() {
   const [launchProgress, setLaunchProgress] = useState(0.12);
   const [launchStatus, setLaunchStatus] = useState("Connecting to server...");
   const [musicMuted, setMusicMutedState] = useState(false);
+  const [swipeUpToPlay, setSwipeUpToPlay] = useState(true);
+  const [selectedMatchmakingTableId, setSelectedMatchmakingTableId] = useState<MatchmakingTableId>("street");
   const [profileOpen, setProfileOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [matchmaking, setMatchmaking] = useState<{ queued: boolean; etaSeconds?: number; seconds?: number }>({ queued: false });
@@ -182,7 +187,28 @@ export default function App() {
         }
       })
       .catch(() => undefined);
+    AsyncStorage.getItem(storedSwipeUpToPlayKey)
+      .then((storedValue) => {
+        if (storedValue !== null) {
+          setSwipeUpToPlay(storedValue === "true");
+        }
+      })
+      .catch(() => undefined);
+    AsyncStorage.getItem(storedMatchmakingTableKey)
+      .then((storedValue) => {
+        const tableConfig = getMatchmakingTable(storedValue);
+        setSelectedMatchmakingTableId(tableConfig.id);
+      })
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    void AsyncStorage.setItem(storedSwipeUpToPlayKey, String(swipeUpToPlay));
+  }, [swipeUpToPlay]);
+
+  useEffect(() => {
+    void AsyncStorage.setItem(storedMatchmakingTableKey, selectedMatchmakingTableId);
+  }, [selectedMatchmakingTableId]);
 
   function setName(nextName: string) {
     setNameState(nextName);
@@ -523,6 +549,7 @@ export default function App() {
       setVisibleGame(null);
       setSession(null);
       setActivityLog([]);
+      setRoomChatMessages([]);
       queueBaseRef.current = null;
       animationQueueRef.current = [];
       setActiveAnimation(null);
@@ -573,8 +600,17 @@ export default function App() {
     nextSocket.on("turn_changes", () => playSoundPlaceholder("turn"));
     nextSocket.on("matchmakingStatus", setMatchmaking);
     nextSocket.on("errorMessage", setError);
+    nextSocket.on("roomChatHistory", (messages: RoomChatMessage[]) => {
+      setRoomChatMessages(messages.slice(-200));
+    });
     nextSocket.on("roomChatMessage", (message: RoomChatMessage) => {
-      setRoomChatMessages((items) => [...items, message].slice(-50));
+      setRoomChatMessages((items) => {
+        if (items.some((item) => item.id === message.id)) {
+          return items;
+        }
+
+        return [...items, message].slice(-200);
+      });
     });
     setSocket(nextSocket);
     return nextSocket;
@@ -612,13 +648,14 @@ export default function App() {
   }
 
   function playRandom() {
+    const tableConfig = getMatchmakingTable(selectedMatchmakingTableId);
     if (!authUser) {
       setError("Sign in to play random.");
       setProfileOpen(true);
       return;
     }
-    if (!isDevAccount && wallet.coins < 25) {
-      setError("You need 25 coins to play random.");
+    if (!isDevAccount && wallet.coins < tableConfig.entryFee) {
+      setError(`You need ${tableConfig.entryFee} coins to play ${tableConfig.name}.`);
       return;
     }
 
@@ -627,10 +664,10 @@ export default function App() {
     setFriendsOpen(false);
     if (!socket?.connected) {
       const nextSocket = connect({ resetState: false });
-      nextSocket.once("connect", () => nextSocket.emit("joinMatchmaking", { name }));
+      nextSocket.once("connect", () => nextSocket.emit("joinMatchmaking", { name, tableId: tableConfig.id }));
       return;
     }
-    emit("joinMatchmaking", { name });
+    emit("joinMatchmaking", { name, tableId: tableConfig.id });
   }
 
   function cancelMatchmaking() {
@@ -1178,6 +1215,7 @@ export default function App() {
   }
 
   function queueAgain() {
+    const tableConfig = getMatchmakingTable(selectedMatchmakingTableId);
     if (!authUser) {
       setError("Sign in to play random.");
       setProfileOpen(true);
@@ -1201,10 +1239,16 @@ export default function App() {
     setMatchmaking({ queued: true, seconds: 0 });
     if (!socket?.connected) {
       const nextSocket = connect({ resetState: false });
-      nextSocket.once("connect", () => nextSocket.emit("joinMatchmaking", { name }));
+      nextSocket.once("connect", () => nextSocket.emit("joinMatchmaking", { name, tableId: tableConfig.id }));
       return;
     }
-    emit("joinMatchmaking", { name });
+    emit("joinMatchmaking", { name, tableId: tableConfig.id });
+  }
+
+  function callAttempt() {
+    if (session) {
+      emit("callAttempt", session);
+    }
   }
 
   function cleanupToMenu() {
@@ -1273,6 +1317,7 @@ export default function App() {
           playerId={session.playerId}
           secondsLeft={secondsLeft}
           serverUrl={serverUrl}
+          swipeUpToPlay={swipeUpToPlay}
           tableLabel={tableLabel}
           timerProgress={timerProgress}
           turnProgress={turnProgress}
@@ -1287,6 +1332,7 @@ export default function App() {
           onShowInterstitialAd={showMatchEndInterstitialAd}
           onBackToRoom={backToRoom}
           onQueueAgain={queueAgain}
+          onCallAttempt={callAttempt}
           onMainMenu={cleanupToMenu}
         />
       ) : screen === "menu" ? (
@@ -1327,12 +1373,16 @@ export default function App() {
           onSignOut={signOut}
           onSignUp={signUp}
           profileOpen={profileOpen}
-          onOpenSettings={() => setError("Settings coming soon.")}
+          onOpenSettings={() => undefined}
+          swipeUpToPlay={swipeUpToPlay}
+          onToggleSwipeUpToPlay={() => setSwipeUpToPlay((enabled) => !enabled)}
           setAuthEmail={setAuthEmail}
           setAuthPassword={setAuthPassword}
           user={authUser}
           onAdReward={grantAdReward}
           onWatchAdPack={grantAdPack}
+          selectedTableId={selectedMatchmakingTableId}
+          onSelectTable={setSelectedMatchmakingTableId}
         />
       ) : (
         <RoomScreen
